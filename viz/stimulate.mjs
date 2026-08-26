@@ -14,18 +14,32 @@ const arg = (name, dflt) => {
   const i = process.argv.indexOf(`--${name}`);
   return i > -1 ? Number(process.argv[i + 1]) : dflt;
 };
-const INTERVAL = arg('interval', 6);        // mean seconds between new chats
-const CONCURRENCY = arg('concurrency', 2);  // max chats in flight
+const VIZ = process.env.VIZ || 'http://127.0.0.1:8123';
+const INTERVAL = arg('interval', 2);   // mean seconds between dispatch checks
+const LOAD = arg('load', 0.6);         // fraction of long-form prompts
+// --concurrency N to pin; otherwise auto-sized to (live worker count +
+// oversub) so every bay stays lit AND a visible retry-queue forms.
+const CONC_ARG = arg('concurrency', 0);
+const OVERSUB = arg('oversub', 2);     // extra in-flight beyond the pool size
 
-const PROMPTS = [
+const QUICK_PROMPTS = [
   'In one short sentence, what is your job?',
   'Give me one tip from your specialty. One sentence.',
-  'Say something reassuring about production. One sentence.',
   'What would you check first during an incident? One sentence.',
-  'Name one thing platform teams forget. One sentence.',
   'Reply with a haiku about Kubernetes.',
   'One sentence: why do snapshots beat idle pods?',
 ];
+// Long generations hold an actor on its worker for 10–20s — that's what makes
+// several bays glow at once instead of a single 2s flash.
+const LONG_PROMPTS = [
+  'Write a detailed 10-step runbook for a failed rollout, one sentence per step.',
+  'Draft a ~250-word incident postmortem for a fictional cache outage.',
+  'Explain in ~200 words how you would triage rising p99 latency.',
+  'List 12 things to check after a Kubernetes upgrade, one line each.',
+  'Write a ~200-word briefing on why idle agents waste cluster capacity.',
+  'Compose a ~250-word status update to leadership about a resolved sev-2.',
+];
+const PROMPTS = null; // superseded by QUICK_PROMPTS / LONG_PROMPTS
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 const rand = a => a[Math.floor(Math.random() * a.length)];
@@ -41,44 +55,84 @@ async function listSandboxAgents() {
 
 let inFlight = 0, sent = 0, ok = 0, failed = 0;
 
+async function workerCount() {
+  try {
+    const r = await fetch(`${API}/api/substrate/status`, { signal: AbortSignal.timeout(6000) });
+    const j = await r.json();
+    return (j.data?.workers ?? []).length || 2;
+  } catch { return 2; }
+}
+
+// agents whose requests are bouncing off a full pool — reported to the viz
+// server so their chips show "queued" on the board
+const waiting = new Set();
+let queueTimer = null;
+function reportQueue(){
+  clearTimeout(queueTimer);
+  queueTimer = setTimeout(() => {
+    fetch(`${VIZ}/queue`, { method: 'POST',
+      body: JSON.stringify({ waiting: [...waiting].map(name => ({ name })) }),
+      signal: AbortSignal.timeout(3000) }).catch(() => {});
+  }, 150);
+}
+
 async function chat(agentRef) {
   const [ns, name] = agentRef.split('/');
-  const prompt = rand(PROMPTS);
+  const prompt = Math.random() < LOAD ? rand(LONG_PROMPTS) : rand(QUICK_PROMPTS);
   const id = `stim-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   inFlight++; sent++;
-  const t0 = Date.now();
   try {
-    const r = await fetch(`${API}/api/a2a-sandboxes/${ns}/${name}/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      // fresh contextId per chat = a fresh session actor restore every time
-      body: JSON.stringify({ jsonrpc: '2.0', id, method: 'message/send',
-        params: { message: { kind: 'message', messageId: id, contextId: id,
-          role: 'user', parts: [{ kind: 'text', text: prompt }] } } }),
-      signal: AbortSignal.timeout(180_000),
-    });
-    const j = await r.json();
-    const text = j.result?.artifacts?.flatMap(a => a.parts ?? [])
-                   .map(p => p.text).filter(Boolean).join(' ') ?? '';
-    const secs = ((Date.now() - t0) / 1000).toFixed(1);
-    if (j.error) { failed++; console.log(`✗ ${name} (${secs}s): ${j.error.message?.slice(0, 90)}`); }
-    else { ok++; console.log(`✓ ${name} (${secs}s): ${text.slice(0, 90) || '(no text)'}`); }
+    while (!stop) {
+      const t0 = Date.now();
+      const r = await fetch(`${API}/api/a2a-sandboxes/${ns}/${name}/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // fresh contextId per chat = a fresh session actor restore every time
+        body: JSON.stringify({ jsonrpc: '2.0', id, method: 'message/send',
+          params: { message: { kind: 'message', messageId: id, contextId: id,
+            role: 'user', parts: [{ kind: 'text', text: prompt }] } } }),
+        signal: AbortSignal.timeout(180_000),
+      });
+      const j = await r.json();
+      if (j.error && /no free workers|worker pool/i.test(j.error.message ?? '')){
+        if (!waiting.has(name)){ waiting.add(name); reportQueue();
+          console.log(`… ${name}: pool full, queued for retry`); }
+        await sleep(1500 + Math.random() * 1500);
+        continue;                                  // same agent, same prompt
+      }
+      if (waiting.delete(name)) reportQueue();
+      const text = j.result?.artifacts?.flatMap(a => a.parts ?? [])
+                     .map(p => p.text).filter(Boolean).join(' ') ?? '';
+      const secs = ((Date.now() - t0) / 1000).toFixed(1);
+      if (j.error) { failed++; console.log(`✗ ${name} (${secs}s): ${j.error.message?.slice(0, 90)}`); }
+      else { ok++; console.log(`✓ ${name} (${secs}s): ${text.slice(0, 90) || '(no text)'}`); }
+      break;
+    }
   } catch (e) {
+    if (waiting.delete(name)) reportQueue();
     failed++; console.log(`✗ ${name}: ${String(e.message).slice(0, 90)}`);
   } finally { inFlight--; }
 }
 
 const agents = await listSandboxAgents();
 if (!agents.length) { console.error(`no SandboxAgents found at ${API}/api/agents`); process.exit(1); }
-console.log(`stimulating ${agents.length} agents via ${API} — mean interval ${INTERVAL}s, ≤${CONCURRENCY} in flight`);
+let concurrency = CONC_ARG || (await workerCount()) + OVERSUB;
+console.log(`stimulating ${agents.length} agents via ${API} — ≤${concurrency} in flight`
+  + `${CONC_ARG ? '' : ` (auto: workers + ${OVERSUB} oversub; re-checks as you scale)`}, ${Math.round(LOAD*100)}% long-form`);
 console.log(agents.map(a => '  ' + a).join('\n'));
 
 let stop = false;
 process.on('SIGINT', () => { stop = true;
   console.log(`\nstopping… sent=${sent} ok=${ok} failed=${failed}`); });
 
+let lastSize = Date.now();
 while (!stop) {
-  if (inFlight < CONCURRENCY) chat(rand(agents));   // deliberately not awaited
+  if (!CONC_ARG && Date.now() - lastSize > 10_000){   // follow live pool scaling
+    lastSize = Date.now();
+    workerCount().then(n => { const c = n + OVERSUB; if (c !== concurrency){
+      console.log(`pool is now ${n} workers — concurrency → ${c}`); concurrency = c; } });
+  }
+  while (inFlight < concurrency && !stop) { chat(rand(agents)); await sleep(400); }
   await sleep(jitter(INTERVAL));
 }
 while (inFlight > 0) await sleep(500);

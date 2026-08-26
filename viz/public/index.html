@@ -472,6 +472,18 @@
   function handle(ev){
     switch (ev.type){
       case 'snapshot': applySnapshot(ev); break;
+      case 'queue': {   // live mode: agents whose requests are bouncing off a full pool
+        const want = new Set((ev.waiting ?? []).map(w => w.name ?? w));
+        for (const n in actors){
+          const a = actors[n];
+          if (want.has(n) && a.state === 'cold'){
+            setState(a, 'queued', 'waiting for worker');
+            log('queue', `<b>queued</b> ${a.ns}/${n} — all workers busy`);
+          } else if (!want.has(n) && a.state === 'queued'){
+            setState(a, 'cold', 'snapshot ✓ · zst');
+          }
+        }
+        break; }
       case 'pool':    setWorkers(ev.replicas);
                       log('info', `<b>workerpool</b> ${ev.name||'kagent-default'} replicas=${ev.replicas}`); break;
       case 'actor':   ensureActor(ev.name, ev.ns||'kagent'); break;

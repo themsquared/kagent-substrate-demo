@@ -51,6 +51,18 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  if (req.url === '/queue' && req.method === 'POST') {
+    // stimulate.mjs reports which agents are waiting on a full pool (substrate
+    // rejects rather than queues, so the retry-queue lives client-side)
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      try { send({ type: 'queue', waiting: JSON.parse(body).waiting ?? [] }); res.end('{"ok":true}'); }
+      catch { res.writeHead(400); res.end('{"ok":false}'); }
+    });
+    return;
+  }
   if (req.url === '/events') {
     res.writeHead(200, { 'Content-Type': 'text/event-stream',
                          'Cache-Control': 'no-cache', Connection: 'keep-alive' });

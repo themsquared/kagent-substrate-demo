@@ -111,6 +111,30 @@ The docs example omits it and fails validation.
 chart's ollama provider defaults to `host.docker.internal:11434`, which is
 exactly right for kind on Docker Desktop. Verified with qwen3:4b.
 
+## Model changes require a re-bake (verified empirically)
+
+Golden snapshots freeze the resolved model config at bake time. Changing the
+`ModelConfig` (provider or model) does NOT propagate to existing SandboxAgents
+— an agent baked on qwen kept answering from qwen after the switch to
+Anthropic. To move the fleet: `kubectl delete -f fleet.yaml && kubectl apply
+-f fleet.yaml` (each golden bake ~60–90s, queues through the WorkerPool).
+
+Related demo-ops gotchas, all hit live:
+- A timed-out/cancelled chat can leave its session actor stuck `Suspending`,
+  pinning a worker slot indefinitely. Remedy: `kubectl rollout restart
+  deploy/kagent-default-deployment -n kagent` (snapshots survive; only the
+  wedged sessions die).
+- When the pool is full, new invokes are REJECTED ("substrate worker pool has
+  no free workers"), not queued — clients must retry.
+- The viz's `kubectl scale` takes field ownership of WorkerPool
+  `.spec.replicas`; subsequent `helm upgrade` needs `--force-conflicts` (and
+  pin `substrateWorkerPool.replicas` to the current value or helm reverts it).
+- Local Ollama models: fine for install-path testing, rough for live demos —
+  qwen3:4b turns ran 30–120s under concurrency and hallucinated tool calls;
+  a 25GB model adds a multi-minute first-load cliff. Use a hosted model
+  (e.g. claude-haiku-4-5 via `providers.anthropic`) for anything with an
+  audience.
+
 ## Field gotchas (from the official walkthrough)
 
 - Empty `OPENAI_API_KEY` at install → no `kagent-openai` secret → default

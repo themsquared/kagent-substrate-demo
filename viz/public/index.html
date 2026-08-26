@@ -411,13 +411,32 @@
     const wlist = s.workers ?? [];
     syncBaysLive(wlist.map(w => w.workerPod).sort());
     const byPod = Object.fromEntries(workers.map(w => [w.pod, w]));
+    const podByActorId = Object.fromEntries(
+      wlist.filter(w => w.actorId).map(w => [w.actorId, w.workerPod]));
+
+    // One agent (template) can own MANY actor entries at once — its golden
+    // actor plus one session actor per chat. The chip represents the agent:
+    // hot if ANY of its actors holds a worker; otherwise a stack of snapshots.
+    const groups = new Map();
     for (const ae of s.actors ?? []){
       const name = ae.actorTemplateName || 'actor-'+String(ae.actorId).slice(0,8);
-      const a = ensureActor(name, ae.actorTemplateNamespace || ae.atespace || 'kagent');
-      const asg = wlist.find(w => w.actorId === ae.actorId);
-      const pod = asg ? asg.workerPod : null;
-      const prev = liveAssign.get(ae.actorId) ?? null;
-      const st = String(ae.status || '').toLowerCase();
+      if (!groups.has(name)) groups.set(name, []);
+      groups.get(name).push(ae);
+    }
+
+    function farewell(a, name){
+      if (a.worker){ a.worker.actor = null; a.worker.el.classList.remove('occupied'); a.worker = null; }
+      a.slot.classList.remove('away');
+      placeAt(a.el, shelfRect(a));
+      log('suspend', `<b>checkpoint</b> ${a.ns}/${name} → object storage`);
+    }
+
+    for (const [name, entries] of groups){
+      const a = ensureActor(name, entries[0].actorTemplateNamespace || 'kagent');
+      const hot = entries.find(ae => podByActorId[ae.actorId]);
+      const pod = hot ? podByActorId[hot.actorId] : null;
+      const prev = liveAssign.get(name) ?? null;
+      const stored = entries.length - (hot ? 1 : 0);
       if (pod && byPod[pod]){
         const w = byPod[pod];
         if (prev !== pod){
@@ -429,36 +448,22 @@
           placeAt(a.el, bayRect(w));
           log('restore', `<b>restore</b> ${a.ns}/${name} → ${pod}`);
         }
+        const st = String(hot.status || '').toLowerCase();
         setState(a, (st.includes('restor')||st.includes('resum')) ? 'restoring' : 'running',
-                 ae.status || 'assigned');
+                 hot.status || 'assigned');
       } else {
-        if (prev){
-          const w = a.worker;
-          if (w){ w.actor = null; w.el.classList.remove('occupied'); a.worker = null; }
-          a.slot.classList.remove('away');
-          placeAt(a.el, shelfRect(a));
-          log('suspend', `<b>checkpoint</b> ${a.ns}/${name} → object storage`);
-        }
-        setState(a, 'cold', ae.latestSnapshot ? 'snapshot ✓ · zst' : (ae.status || ''));
+        if (prev) farewell(a, name);
+        setState(a, 'cold', stored > 1 ? `${stored} snapshots · zst` : 'snapshot ✓ · zst');
       }
-      a.liveId = ae.actorId;
-      liveAssign.set(ae.actorId, pod);
+      liveAssign.set(name, pod);
     }
-    // actors that vanished from the inventory (e.g. a finished golden actor)
-    // get a farewell: chip returns to its shelf slot as a stored snapshot
-    const liveIds = new Set((s.actors ?? []).map(x => x.actorId));
-    for (const id of [...liveAssign.keys()]){
-      if (liveIds.has(id)) continue;
-      for (const n in actors){
-        const a = actors[n];
-        if (a.liveId !== id) continue;
-        if (a.worker){ a.worker.actor = null; a.worker.el.classList.remove('occupied'); a.worker = null; }
-        a.slot.classList.remove('away');
-        setState(a, 'cold', 'snapshot ✓ · zst');
-        placeAt(a.el, shelfRect(a));
-        log('suspend', `<b>checkpoint</b> ${a.ns}/${n} → object storage`);
-      }
-      liveAssign.delete(id);
+
+    // agents that vanished from the inventory entirely
+    for (const name of [...liveAssign.keys()]){
+      if (groups.has(name)) continue;
+      const a = actors[name];
+      if (a){ farewell(a, name); setState(a, 'cold', 'snapshot ✓ · zst'); }
+      liveAssign.delete(name);
     }
     refreshStats();
   }

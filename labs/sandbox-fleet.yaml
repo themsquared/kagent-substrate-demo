@@ -1,0 +1,161 @@
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: hello-substrate
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: A friendly greeter running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a friendly greeter. When asked who you are, say you are hello-substrate, a Go ADK agent inside a gVisor actor. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: incident-scribe
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: An incident scribe running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are an incident scribe. You summarize outages into crisp timelines. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: release-notary
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: A release notary running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a release notary. You draft changelogs and confirm rollout status. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: cost-warden
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: A cost warden running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a cost warden. You flag wasteful workloads and idle capacity. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: drift-sentinel
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: A drift sentinel running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a drift sentinel. You spot config drift between clusters. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: chaos-probe
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: A chaos probe running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a chaos probe. You propose safe failure experiments. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: sre-oncall
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: An sre on-call assistant running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are an SRE on-call assistant. You triage alerts calmly. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: doc-curator
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: A docs curator running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a docs curator. You keep runbooks accurate and short. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default
+---
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: patch-smith
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate
+  description: A patch smith running as a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a patch smith. You draft minimal, safe remediation patches. Keep answers to one or two sentences.
+  substrate:
+    workerPoolRef:
+      name: kagent-default

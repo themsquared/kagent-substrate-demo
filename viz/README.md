@@ -1,0 +1,55 @@
+# Substrate Scope
+
+Real-time visualization of the Agent Substrate actor lifecycle: worker bays up
+top (hot, amber), object storage down below (cold, cyan), actor chips flying
+between them on restore/checkpoint. Density, session, and last-restore-latency
+counters in the header.
+
+Demo controls (simulated mode): **SURGE** invokes every idle agent at once so
+the queue forms; **workers +** boots new bays live (they warm up pulling
+`ateom-gvisor` before taking actors) and the queue drains into them. Per-bay
+session counters show the multiplexing story — one bay, many agents over time.
+In live mode the workers buttons run the real scaling path
+(`kubectl scale workerpool`) against the cluster.
+
+## Auto-stimulate (keep a POC board moving)
+
+Idle clusters make boring demos. `stimulate.mjs` sends real chats to random
+SandboxAgents on a jittered interval — every one is a genuine actor restore →
+LLM turn → checkpoint, so the board churns with real traffic:
+
+```bash
+node viz/stimulate.mjs                      # ~1 chat / 6s, ≤2 in flight
+node viz/stimulate.mjs --interval 4 --concurrency 3
+```
+
+It discovers SandboxAgents from `/api/agents` and drives them through the
+controller's sandbox A2A mount (`/api/a2a-sandboxes/<ns>/<name>/` — note:
+SandboxAgents are *not* on the regular `/api/a2a/` mount in kagent 0.9.9, and
+`message/send` requires a `contextId`). Needs the controller API on
+`KAGENT_API` (default `http://127.0.0.1:8083`; `server.mjs --live` already
+port-forwards it).
+
+## Run it
+
+```bash
+# Simulated feed — no cluster needed. Perfect for talks/demos.
+open public/index.html            # or: node server.mjs → http://localhost:8123
+
+# Live mode — points at your current kubectl context (e.g. the lab 1 kind cluster)
+node server.mjs --live
+```
+
+## What "live" can and can't see (today)
+
+| Signal | Source | Status |
+| --- | --- | --- |
+| WorkerPool size | `workerpools.ate.dev` | ✅ live |
+| Actor inventory | `actortemplates.ate.dev`, `sandboxagents`, `agentharnesses` | ✅ live |
+| Golden-snapshot phase | ActorTemplate `status.phase` | ✅ live (event feed) |
+| Per-session Running/Suspended | `ateapi` (gRPC, Redis-backed) — **not a CRD** | ⬜ TODO |
+
+The full restore→run→checkpoint animation runs in simulated mode. Wiring the
+real per-session state means talking to ateapi (or whatever endpoint the
+kagent UI's "View → Substrate" inventory uses) — tracked in
+[notes/substrate-architecture.md](../notes/substrate-architecture.md) open questions.

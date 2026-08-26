@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "substrate-scope",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["viz/server.mjs"],
+      "port": 8123
+    },
+    {
+      "name": "substrate-scope-live",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["viz/server.mjs", "--live"],
+      "port": 8123
+    }
+  ]
+}

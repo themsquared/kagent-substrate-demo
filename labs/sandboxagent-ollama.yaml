@@ -1,0 +1,21 @@
+# Declarative agent on Agent Substrate, model served by local Ollama
+# (providers.default=ollama at install → default-model-config points at it).
+apiVersion: kagent.dev/v1alpha2
+kind: SandboxAgent
+metadata:
+  name: hello-substrate
+  namespace: kagent
+spec:
+  type: Declarative
+  platform: substrate   # required by CEL validation when spec.substrate is set
+  description: Tiny declarative agent running inside a substrate actor
+  declarative:
+    runtime: go
+    modelConfig: default-model-config
+    systemMessage: |
+      You are a friendly assistant living inside an Agent Substrate sandbox.
+      When asked who you are, say "I am hello-substrate, a Go ADK declarative
+      agent running inside a gVisor actor."
+  substrate:
+    workerPoolRef:
+      name: kagent-default

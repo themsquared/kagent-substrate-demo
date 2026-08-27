@@ -13,9 +13,8 @@
     --disp:"Chakra Petch",var(--sans);
   }
   *{box-sizing:border-box}
-  html,body{height:100%}
-  body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);
-       font-size:14px;overflow-x:hidden;overflow-y:auto}
+  body{margin:0;min-height:100vh;background:var(--ground);color:var(--text);
+       font-family:var(--sans);font-size:14px;overflow-x:hidden}
   .app{display:flex;flex-direction:column;gap:12px;padding:14px;min-height:100vh}
 
   /* ── header ─────────────────────────────────────────── */
@@ -583,8 +582,8 @@
   const chart = $('chart');
   let curTab = 'cpu';
   const LEGENDS = {
-    cpu:      'solid: workerpool actual mCPU · dotted: same agents as always-on pods',
-    mem:      'solid: workerpool actual MiB · dotted: same agents as always-on pods',
+    cpu:      'solid: RESERVED by workerpool (slots × unit) · dotted: reserved if always-on pods (agents × unit) · shaded: actual use',
+    mem:      'solid: RESERVED by workerpool (slots × unit) · dotted: reserved if always-on pods (agents × unit) · shaded: actual use',
     active:   'agents on workers right now · dashed: running average',
     capacity: 'occupied worker slots, % of pool',
   };
@@ -604,15 +603,22 @@
     if (points.length < 2) return;
     const pad = { l: 46, r: 10, t: 10, b: 18 };
     const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    // Reserved capacity is the honest comparison: always-on pods reserve
+    // agents×unit forever; substrate reserves slots×unit and tracks demand.
+    // Actual usage is context (shaded) — the work costs what it costs
+    // wherever it runs.
     const sel = {
-      cpu:      [p => p.wCpu,  p => p.benchCpu],
-      mem:      [p => p.wMem,  p => p.benchMem],
-      active:   [p => p.active, null],
-      capacity: [p => p.slots ? Math.round(p.active / p.slots * 100) : 0, () => 100],
+      cpu:      [p => (p.slots ?? 0) * (p.unitCpu ?? 50),
+                 p => (p.agents ?? 0) * (p.unitCpu ?? 50), p => p.wCpu ?? 0],
+      mem:      [p => (p.slots ?? 0) * (p.unitMem ?? 128),
+                 p => (p.agents ?? 0) * (p.unitMem ?? 128), p => p.wMem ?? 0],
+      active:   [p => p.active, null, null],
+      capacity: [p => p.slots ? Math.round(p.active / p.slots * 100) : 0, () => 100, null],
     }[curTab];
     const solidV = points.map(sel[0]);
     const dotV = sel[1] ? points.map(sel[1]) : null;
-    let max = Math.max(...solidV, ...(dotV ?? [0]), 1) * 1.15;
+    const areaV = sel[2] ? points.map(sel[2]) : null;
+    let max = Math.max(...solidV, ...(dotV ?? [0]), ...(areaV ?? [0]), 1) * 1.15;
     if (curTab === 'capacity') max = 110;
     const x = i => pad.l + i / (points.length - 1) * iw;
     const y = v => pad.t + ih - (v / max) * ih;
@@ -632,7 +638,8 @@
       if (fill){ g.lineTo(x(vals.length - 1), y(0)); g.lineTo(x(0), y(0)); g.closePath();
                  g.fillStyle = fill; g.fill(); }
     };
-    line(solidV, '#FFB454', [], 'rgba(255,180,84,.08)');
+    if (areaV) line(areaV, 'rgba(255,180,84,.35)', [], 'rgba(255,180,84,.07)');
+    line(solidV, '#FFB454', [], areaV ? undefined : 'rgba(255,180,84,.08)');
     if (dotV) line(dotV, '#7DD6E8', [5, 4]);
     if (curTab === 'active'){                            // running average
       let s = 0; const avg = solidV.map((v, i) => (s += v, s / (i + 1)));
@@ -818,6 +825,7 @@
       wCpu: Math.round(30 + 14*workers.length + 60*running + Math.random()*12),
       wMem: Math.round(14*workers.length + 120*running + Math.random()*8),
       benchCpu: n*7, benchMem: n*204,        // measured always-on agent pod cost
+      unitCpu: 50, unitMem: 128,             // per-unit reservation (requests)
       active: running, slots: workers.length, queued: queuedC, agents: n });
     later(simMetrics, 2000);
   }

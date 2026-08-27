@@ -127,6 +127,20 @@ const METRICS_MAX = 1200;        // ~1h at 3s
 let queuedNow = 0;               // updated by /queue posts from stimulate.mjs
 let nodeName = null;
 
+// Per-unit reservation, read from a real always-on agent Deployment: the fair
+// comparison is RESERVED capacity (requests), not idle usage. One substrate
+// worker needs the same per-session unit an agent pod does — you just need
+// `slots` of them instead of `agents`.
+const unit = { cpu: 50, mem: 128 };   // fallback = kagent chart defaults
+const parseCpu = s => !s ? 0 : s.endsWith('m') ? parseInt(s) : parseFloat(s) * 1000;
+const parseMem = s => !s ? 0 : s.endsWith('Gi') ? parseFloat(s) * 1024 : parseInt(s);
+async function fetchUnit() {
+  const d = await kubectl(['get', 'deploy', 'k8s-agent', '-n', 'kagent', '-o', 'json']);
+  const r = d?.spec?.template?.spec?.containers?.[0]?.resources?.requests;
+  if (r?.cpu) unit.cpu = parseCpu(r.cpu) || unit.cpu;
+  if (r?.memory) unit.mem = parseMem(r.memory) || unit.mem;
+}
+
 async function sampleMetrics() {
   if (!LIVE) return;
   if (!nodeName) {
@@ -155,6 +169,7 @@ async function sampleMetrics() {
     wCpu: Math.round(wCpu), wMem: Math.round(wMem),
     benchCpu: aN ? Math.round(aCpu / aN * agents) : 0,
     benchMem: aN ? Math.round(aMem / aN * agents) : 0,
+    unitCpu: unit.cpu, unitMem: unit.mem,
     active, slots, queued: queuedNow, agents,
   };
   metrics.push(point);
@@ -328,6 +343,7 @@ server.listen(PORT, () => {
       pf();
     }
     poll(); setInterval(poll, 800);   // fast enough to catch ~1.5s Haiku sessions on a worker
+    fetchUnit();
     setTimeout(() => { sampleMetrics(); setInterval(sampleMetrics, 3000); }, 4000);
   }
 });

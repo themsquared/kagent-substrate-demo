@@ -52,7 +52,7 @@
     .main{grid-template-columns:1fr;grid-template-rows:1fr minmax(140px,26vh)}
   }
 
-  .stage{position:relative;display:grid;grid-template-rows:auto 1fr auto;gap:10px;min-height:0;min-width:0}
+  .stage{position:relative;display:grid;grid-template-rows:auto auto 1fr;gap:10px;min-height:0;min-width:0;align-content:start}
   .zone{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:14px 16px;min-height:0}
   .zone h2{margin:0 0 10px;font-family:var(--disp);font-size:12px;font-weight:600;
            text-transform:uppercase;letter-spacing:.16em;color:var(--muted);display:flex;gap:10px;align-items:center}
@@ -82,11 +82,13 @@
                       inset 0 0 26px rgba(125,214,232,.08)}}
   @media (prefers-reduced-motion:reduce){.bay.warming{animation:none}}
 
-  /* transit zone (flex spacer that chips fly through) */
-  .transit{position:relative;border:0;background:transparent;min-height:34px}
-  .transit .axis{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
-                 color:var(--faint);font-family:var(--mono);font-size:10px;letter-spacing:.2em;
-                 text-transform:uppercase}
+  /* restore queue lane */
+  .queue-zone h2 .dot{background:#FFB454;box-shadow:0 0 8px rgba(255,180,84,.7)}
+  .qlane{display:flex;gap:10px;flex-wrap:wrap;align-content:flex-start;min-height:64px}
+  .qlane:empty::after{content:'no backpressure — all demand served';
+                      color:var(--faint);font-family:var(--mono);font-size:10px;
+                      letter-spacing:.15em;line-height:58px;padding-left:4px}
+  .qslot{width:112px;height:58px;border-radius:9px;border:1px dashed rgba(255,180,84,.3)}
 
   /* storage shelf — one permanent slot per actor; ghosted while its actor is hot */
   .shelf{display:flex;gap:10px;flex-wrap:wrap;align-content:flex-start;min-height:64px}
@@ -179,7 +181,11 @@
             <span class="hint">pre-warmed gVisor sandboxes · 1 actor at a time, many per hour</span></h2>
         <div class="bays" id="bays"></div>
       </section>
-      <section class="zone transit"><div class="axis">restore ↑ · zstd checkpoint ↓</div></section>
+      <section class="zone queue-zone">
+        <h2><span class="dot"></span>Restore queue
+            <span class="hint">waiting for a free worker · restore ↑ · checkpoint ↓</span></h2>
+        <div class="qlane" id="qlane"></div>
+      </section>
       <section class="zone store">
         <h2><span class="dot"></span>Object storage · ate-snapshots
             <span class="hint">suspended actors, zstd</span></h2>
@@ -291,19 +297,35 @@
   function reflowCold(){
     for (const n in actors){
       const a = actors[n];
-      if (a.state === 'cold' || a.state === 'queued' || a.state === 'checkpointing')
+      if (a.state === 'queued' && a.qslot && a.qslot.isConnected)
+        placeAt(a.el, rectOf(a.qslot));
+      else if (a.state === 'cold' || a.state === 'checkpointing')
         placeAt(a.el, shelfRect(a));
     }
   }
 
+  const qlane = $('qlane');
   function setState(a, state, meta){
+    const was = a.state;
     a.state = state;
     a.el.className = 'chip ' + state;
     a.el.querySelector('.st').textContent =
       {cold:'suspended', queued:'queued', restoring:'restoring',
        running:'running', checkpointing:'checkpointing'}[state];
     if (meta !== undefined) a.el.querySelector('.meta').textContent = meta;
+    // queued chips park in the queue lane, not on their shelf slot
+    if (state === 'queued' && was !== 'queued'){
+      if (!a.qslot){ a.qslot = document.createElement('div'); a.qslot.className = 'qslot'; }
+      qlane.appendChild(a.qslot);
+      a.slot.classList.add('away');
+      placeAt(a.el, rectOf(a.qslot));
+    } else if (state !== 'queued' && was === 'queued' && a.qslot){
+      a.qslot.remove();
+      if (state === 'cold'){ a.slot.classList.remove('away'); placeAt(a.el, shelfRect(a)); }
+      reflowCold();   // remaining queued chips shift left in the lane
+    }
   }
+  function rectOf(el){ const r = el.getBoundingClientRect(); return { left:r.left, top:r.top }; }
 
   function doRestore(a, ms){
     const w = freeWorker();

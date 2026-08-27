@@ -32,10 +32,16 @@ doing nothing.
 shipped policy is a split of it:
 
 ```
-scale UP   when queued > 0 for 2 consecutive samples (6s), cooldown 12s, max 8
-scale DOWN when queued == 0 and busy < slots for 12 samples (~36s),
-           cooldown 45s, min 2
+target      = busy + queued, clamped to [2, 8]
+scale UP    straight to target when queued > 0 for 2 samples (6s), cooldown 8s
+scale DOWN  straight to max(demand over last 30s window) when that peak < slots
+            for 6 samples (~18s), cooldown 20s
 ```
+
+Target-based on purpose (v2 — ±1 stepping was too timid): one decisive jump
+to what demand needs in either direction. The down-target uses the WINDOW PEAK
+rather than instantaneous demand so a brief dip between sessions can't slash
+the pool, while a genuinely idle pool still drops 8→2 in a single step.
 
 Design notes:
 - **Asymmetric on purpose**: scale up fast (queued work is user-visible

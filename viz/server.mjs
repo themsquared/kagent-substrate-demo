@@ -198,8 +198,9 @@ async function sampleMetrics() {
 // mostly I/O wait. Demand (queued + busy) vs slots is what actually matters.
 let autoscale = LIVE && !process.argv.includes('--no-autoscale'),
     lastScaleAt = 0, upStreak = 0, downStreak = 0;
-const AS = { MIN: 2, MAX: 8, COOL_UP: 12_000, COOL_DOWN: 45_000,
-             UP_TICKS: 2, DOWN_TICKS: 12 };
+const AS = { MIN: 2, MAX: 8, COOL_UP: 8_000, COOL_DOWN: 20_000,
+             UP_TICKS: 2, DOWN_TICKS: 6, WINDOW: 10 };
+const demandWin = [];   // rolling demand (busy + queued), ~30s at 3s samples
 
 function scaleTo(pool, n, why) {
   lastScaleAt = Date.now();
@@ -208,18 +209,31 @@ function scaleTo(pool, n, why) {
     err => send({ type: 'autoscale', replicas: n, why, ok: !err }));
 }
 
+// Target-based, both directions: scale straight to what demand needs, not ±1.
+// Up = current demand (fast, queued work is user-visible latency). Down = the
+// PEAK demand over the rolling window (one decisive jump, but a brief dip
+// can't slash the pool).
 function autoscaleTick(point) {
   if (!autoscale) return;
   const pool = Object.values(state.pools)[0];
   if (!pool) return;
+  const clamp = n => Math.min(AS.MAX, Math.max(AS.MIN, n));
+  const demand = point.active + point.queued;
+  demandWin.push(demand);
+  if (demandWin.length > AS.WINDOW) demandWin.shift();
+  const upTarget = clamp(demand);
+  const downTarget = clamp(Math.max(...demandWin));
   if (point.queued > 0) { upStreak++; downStreak = 0; }
-  else if (point.active < point.slots) { downStreak++; upStreak = 0; }
+  else if (downTarget < point.slots) { downStreak++; upStreak = 0; }
   else { upStreak = 0; downStreak = 0; }
   const now = Date.now();
-  if (upStreak >= AS.UP_TICKS && point.slots < AS.MAX && now - lastScaleAt > AS.COOL_UP) {
-    upStreak = 0; scaleTo(pool, point.slots + 1, `queue depth ${point.queued}`);
-  } else if (downStreak >= AS.DOWN_TICKS && point.slots > AS.MIN && now - lastScaleAt > AS.COOL_DOWN) {
-    downStreak = 0; scaleTo(pool, point.slots - 1, 'idle capacity');
+  if (upStreak >= AS.UP_TICKS && upTarget > point.slots && now - lastScaleAt > AS.COOL_UP) {
+    upStreak = 0;
+    scaleTo(pool, upTarget, `demand ${demand} (${point.queued} queued)`);
+  } else if (downStreak >= AS.DOWN_TICKS && downTarget < point.slots
+             && now - lastScaleAt > AS.COOL_DOWN) {
+    downStreak = 0;
+    scaleTo(pool, downTarget, `peak demand ${Math.max(...demandWin)} over 30s`);
   }
 }
 

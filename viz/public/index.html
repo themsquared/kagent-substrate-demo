@@ -415,7 +415,9 @@
     reflowCold();
     for (const n in actors){
       const a = actors[n];
-      if (a.worker && a.worker.el.isConnected) placeAt(a.el, bayRect(a.worker));
+      // only the bay's CURRENT tenant may pin to it — never two chips per sandbox
+      if (a.worker && a.worker.el.isConnected && a.worker.actor === a)
+        placeAt(a.el, bayRect(a.worker));
     }
   }
   addEventListener('resize', reflowAll);
@@ -537,8 +539,12 @@
                  hot.status || 'assigned');
       } else {
         // min-dwell: keep a fresh bay visit rendered ≥1.6s even if the actor
-        // already checkpointed — otherwise fast sessions read as a flicker
-        dwell = !!(a.worker && a.worker.actor === a &&
+        // already checkpointed — otherwise fast sessions read as a flicker.
+        // NEVER dwell if another agent now claims this pod: one actor per
+        // sandbox, always — an incoming tenant evicts the lingering ghost.
+        const podTaken = a.worker &&
+          [...asgByName.entries()].some(([n2, p2]) => p2 === a.worker.pod && n2 !== name);
+        dwell = !!(a.worker && a.worker.actor === a && !podTaken &&
                    Date.now() - (a.arrivedAt ?? 0) < 1600);
         if (dwell){ effPod = prev; }
         else {

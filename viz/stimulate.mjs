@@ -16,7 +16,7 @@ const arg = (name, dflt) => {
 };
 const VIZ = process.env.VIZ || 'http://127.0.0.1:8123';
 const INTERVAL = arg('interval', 2);   // mean seconds between dispatch checks
-const LOAD = arg('load', 0.6);         // fraction of long-form prompts
+const LOAD = arg('load', 0.75);        // fraction of long-form prompts
 // --concurrency N to pin; otherwise auto-sized to (live worker count +
 // oversub) so every bay stays lit AND a visible retry-queue forms.
 const CONC_ARG = arg('concurrency', 0);
@@ -33,12 +33,12 @@ const QUICK_PROMPTS = [
 // Long generations hold an actor on its worker for 10–20s — that's what makes
 // several bays glow at once instead of a single 2s flash.
 const LONG_PROMPTS = [
-  'Write a detailed 10-step runbook for a failed rollout, one sentence per step.',
-  'Draft a ~250-word incident postmortem for a fictional cache outage.',
-  'Explain in ~200 words how you would triage rising p99 latency.',
-  'List 12 things to check after a Kubernetes upgrade, one line each.',
-  'Write a ~200-word briefing on why idle agents waste cluster capacity.',
-  'Compose a ~250-word status update to leadership about a resolved sev-2.',
+  'Write a detailed 15-step runbook for a failed rollout, two sentences per step.',
+  'Draft a ~450-word incident postmortem for a fictional cache outage, with timeline, root cause, and action items.',
+  'Explain in ~400 words how you would triage rising p99 latency, covering dashboards, traces, and rollback criteria.',
+  'List 20 things to check after a Kubernetes upgrade, with a sentence of rationale for each.',
+  'Write a ~400-word briefing on why idle agents waste cluster capacity and how snapshot-based multiplexing fixes it.',
+  'Compose a ~450-word status update to leadership about a resolved sev-2, including impact, response, and prevention.',
 ];
 const PROMPTS = null; // superseded by QUICK_PROMPTS / LONG_PROMPTS
 

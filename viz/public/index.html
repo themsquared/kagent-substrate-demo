@@ -481,7 +481,10 @@
     }
 
     function farewell(a, name){
-      if (a.worker){ a.worker.actor = null; a.worker.el.classList.remove('occupied'); a.worker = null; }
+      if (a.worker){
+        if (a.worker.actor === a){ a.worker.actor = null; a.worker.el.classList.remove('occupied'); }
+        a.worker = null;
+      }
       a.slot.classList.remove('away');
       placeAt(a.el, shelfRect(a));
       log('suspend', `<b>checkpoint</b> ${a.ns}/${name} → object storage`);
@@ -493,11 +496,14 @@
       const pod = hot ? podByActorId[hot.actorId] : null;
       const prev = liveAssign.get(name) ?? null;
       const stored = entries.length - (hot ? 1 : 0);
+      let effPod = pod, dwell = false;
       if (pod && byPod[pod]){
         const w = byPod[pod];
         if (prev !== pod){
-          if (a.worker && a.worker !== w){ a.worker.actor = null; a.worker.el.classList.remove('occupied'); }
+          if (a.worker && a.worker !== w && a.worker.actor === a){
+            a.worker.actor = null; a.worker.el.classList.remove('occupied'); }
           w.actor = a; a.worker = w; w.sessions++; totalSessions++;
+          a.arrivedAt = Date.now();
           w.el.classList.add('occupied');
           w.el.querySelector('.sess').textContent = `${w.sessions} session${w.sessions>1?'s':''}`;
           a.slot.classList.add('away');
@@ -508,10 +514,17 @@
         setState(a, (st.includes('restor')||st.includes('resum')) ? 'restoring' : 'running',
                  hot.status || 'assigned');
       } else {
-        if (prev) farewell(a, name);
-        // don't clobber a queued chip — the queue feed owns that state
-        if (a.state !== 'queued')
-          setState(a, 'cold', stored > 1 ? `${stored} snapshots · zst` : 'snapshot ✓ · zst');
+        // min-dwell: keep a fresh bay visit rendered ≥1.6s even if the actor
+        // already checkpointed — otherwise fast sessions read as a flicker
+        dwell = !!(a.worker && a.worker.actor === a &&
+                   Date.now() - (a.arrivedAt ?? 0) < 1600);
+        if (dwell){ effPod = prev; }
+        else {
+          if (prev) farewell(a, name);
+          // don't clobber a queued chip — the queue feed owns that state
+          if (a.state !== 'queued')
+            setState(a, 'cold', stored > 1 ? `${stored} snapshots · zst` : 'snapshot ✓ · zst');
+        }
       }
       // a session can complete entirely between two polls — a new session
       // actorId appearing for this agent proves the run happened even though
@@ -521,7 +534,7 @@
         let fresh = 0;
         for (const id of ids) if (!a.knownIds.has(id)) fresh++;
         const arrivedThisPass = pod && prev !== pod;
-        if (fresh > 0 && !pod && !arrivedThisPass){
+        if (fresh > 0 && !pod && !arrivedThisPass && !dwell){
           totalSessions += fresh;
           a.el.classList.remove('flashrun'); void a.el.offsetWidth;  // restart animation
           a.el.classList.add('flashrun');
@@ -530,7 +543,7 @@
         }
       }
       a.knownIds = ids;
-      liveAssign.set(name, pod);
+      liveAssign.set(name, effPod);
     }
 
     // agents that vanished from the inventory entirely
@@ -634,17 +647,21 @@
         for (const n in actors){
           const a = actors[n];
           if (want.has(n)){
+            a.unqueuedAt = null;
             if (a.state === 'cold'){
               setState(a, 'queued', 'waiting for worker');
               a.queuedAt = now;
               log('queue', `<b>queued</b> ${a.ns}/${n} — all workers busy`);
             }
           } else if (a.state === 'queued'){
-            // hold the queued look ≥2.5s so fast drains still register visually
-            // (a restore meanwhile wins immediately via the snapshot path)
-            const rest = Math.max(0, 2500 - (now - (a.queuedAt ?? 0)));
+            // linger ≥1.2s after un-queue so the worker assignment (next poll)
+            // can turn this into a direct queue→bay flight instead of a
+            // queue→shelf→bay hop; also hold the queued look ≥2.5s total
+            a.unqueuedAt = now;
+            const rest = Math.max(1200, 2500 - (now - (a.queuedAt ?? 0)));
             setTimeout(() => {
-              if (a.state === 'queued' && Date.now() - (a.queuedAt ?? 0) >= 2400)
+              if (a.state === 'queued' && a.unqueuedAt &&
+                  Date.now() - a.unqueuedAt >= 1100)
                 setState(a, 'cold', 'snapshot ✓ · zst');
             }, rest);
           }

@@ -22,6 +22,8 @@ const LOAD = arg('load', 0.75);        // fraction of long-form prompts
 const CONC_ARG = arg('concurrency', 0);
 const OVERSUB = arg('oversub', 4);     // extra in-flight beyond the pool size —
                                        // deep enough that queued agents visibly wait their turn
+const BUDGET = arg('budget', 0);       // stop after N chats total (0 = unlimited)
+                                       // — overnight-safe: no runaway API spend
 
 const QUICK_PROMPTS = [
   'In one short sentence, what is your job?',
@@ -119,7 +121,8 @@ const agents = await listSandboxAgents();
 if (!agents.length) { console.error(`no SandboxAgents found at ${API}/api/agents`); process.exit(1); }
 let concurrency = CONC_ARG || (await workerCount()) + OVERSUB;
 console.log(`stimulating ${agents.length} agents via ${API} — ≤${concurrency} in flight`
-  + `${CONC_ARG ? '' : ` (auto: workers + ${OVERSUB} oversub; re-checks as you scale)`}, ${Math.round(LOAD*100)}% long-form`);
+  + `${CONC_ARG ? '' : ` (auto: workers + ${OVERSUB} oversub; re-checks as you scale)`}, ${Math.round(LOAD*100)}% long-form`
+  + (BUDGET ? `, budget ${BUDGET} chats` : ', no budget (Ctrl-C or STOP DEMO to halt)'));
 console.log(agents.map(a => '  ' + a).join('\n'));
 
 let stop = false;
@@ -140,13 +143,21 @@ async function checkDemo(){
 
 let lastSize = Date.now();
 while (!stop) {
+  if (BUDGET && sent >= BUDGET){
+    console.log(`■ budget reached: ${sent}/${BUDGET} chats dispatched — stopping`);
+    // flip the board's master switch so STOP DEMO shows why traffic ended
+    fetch(`${VIZ}/demo`, { method: 'POST', body: JSON.stringify({ run: false }),
+      signal: AbortSignal.timeout(2000) }).catch(() => {});
+    break;
+  }
   await checkDemo();
   if (!CONC_ARG && Date.now() - lastSize > 10_000){   // follow live pool scaling
     lastSize = Date.now();
     workerCount().then(n => { const c = n + OVERSUB; if (c !== concurrency){
       console.log(`pool is now ${n} workers — concurrency → ${c}`); concurrency = c; } });
   }
-  while (demoRun && inFlight < concurrency && !stop) { chat(rand(agents)); await sleep(400); }
+  while (demoRun && inFlight < concurrency && !stop
+         && !(BUDGET && sent >= BUDGET)) { chat(rand(agents)); await sleep(400); }
   await sleep(jitter(INTERVAL));
 }
 while (inFlight > 0) await sleep(500);

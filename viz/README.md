@@ -19,9 +19,17 @@ SandboxAgents on a jittered interval — every one is a genuine actor restore �
 LLM turn → checkpoint, so the board churns with real traffic:
 
 ```bash
-node viz/stimulate.mjs                      # ~1 chat / 6s, ≤2 in flight
-node viz/stimulate.mjs --interval 4 --concurrency 3
+node viz/stimulate.mjs                      # auto-sized to the pool, no budget
+node viz/stimulate.mjs --budget 200         # stop after 200 chats (overnight-safe)
+node viz/stimulate.mjs --oversub 6 --load 0.9 --interval 2
 ```
+
+Flags: `--budget N` stop after N chats total and flip the board's STOP DEMO
+switch (default unlimited); `--oversub N` in-flight beyond the pool size, makes
+the queue visible (default 4); `--load 0..1` fraction of long-form prompts
+(default 0.75); `--interval s` dispatch-check pacing (default 2);
+`--concurrency N` pin in-flight instead of auto-sizing. The board's STOP DEMO
+button halts dispatching within ~2s; clicking again resumes.
 
 It discovers SandboxAgents from `/api/agents` and drives them through the
 controller's sandbox A2A mount (`/api/a2a-sandboxes/<ns>/<name>/` — note:

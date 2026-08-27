@@ -103,6 +103,7 @@
   .tab:focus-visible{outline:2px solid var(--cold);outline-offset:1px}
   #chart{width:100%;height:150px;display:block}
   .surge.on{color:var(--ok);border-color:rgba(123,216,143,.5)}
+  .surge.stopped{color:var(--warn);border-color:rgba(242,143,173,.55)}
 
   /* storage shelf — one permanent slot per actor; ghosted while its actor is hot */
   .shelf{display:flex;gap:10px;flex-wrap:wrap;align-content:flex-start;min-height:64px}
@@ -190,6 +191,8 @@
               style="display:none">RESET POOL</button>
       <button class="surge" id="autoscale" title="scale the pool automatically on queue depth / idle capacity"
               style="display:none">AUTOSCALE: OFF</button>
+      <button class="surge" id="demo" title="master switch: stops the stimulator and surge from sending billable chats"
+              style="display:none">STOP DEMO</button>
     </div>
     <div class="stats">
       <div class="stat"><b id="s-actors" class="coldv">0</b><span>agents</span></div>
@@ -670,6 +673,12 @@
         const b = $('autoscale');
         b.textContent = 'AUTOSCALE: ' + (ev.on ? 'ON' : 'OFF');
         b.classList.toggle('on', ev.on); break; }
+      case 'demo_state': {
+        const b = $('demo');
+        b.textContent = ev.run ? 'STOP DEMO' : 'DEMO STOPPED — START';
+        b.classList.toggle('stopped', !ev.run);
+        log('info', `<b>demo</b> ${ev.run ? 'running — chats dispatching' : 'STOPPED — no billable chats'}`);
+        break; }
       case 'queue': {   // live mode: agents whose requests are bouncing off a full pool
         const want = new Set((ev.waiting ?? []).map(w => w.name ?? w));
         const now = Date.now();
@@ -729,6 +738,7 @@
           $('a-up').parentElement.style.display = sim ? '' : 'none';
           $('reset').style.display = sim ? 'none' : '';
           $('autoscale').style.display = sim ? 'none' : '';
+          $('demo').style.display = sim ? 'none' : '';
           if (!sim) stopSim();
           return; }
         handle(ev);
@@ -812,6 +822,10 @@
   $('autoscale').onclick = () => {
     const want = $('autoscale').textContent.includes('OFF');
     fetch('/autoscale', { method:'POST', body: JSON.stringify({ on: want }) }).catch(() => {});
+  };
+  $('demo').onclick = () => {
+    const want = $('demo').classList.contains('stopped');   // stopped → start
+    fetch('/demo', { method:'POST', body: JSON.stringify({ run: want }) }).catch(() => {});
   };
 
   // synthetic telemetry so the charts live in sim mode too

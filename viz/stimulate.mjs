@@ -126,14 +126,27 @@ let stop = false;
 process.on('SIGINT', () => { stop = true;
   console.log(`\nstopping… sent=${sent} ok=${ok} failed=${failed}`); });
 
+// the viz server's STOP DEMO button is the master switch for billable chats
+let demoRun = true, lastDemoCheck = 0;
+async function checkDemo(){
+  if (Date.now() - lastDemoCheck < 2000) return;
+  lastDemoCheck = Date.now();
+  try {
+    const j = await (await fetch(`${VIZ}/demo`, { signal: AbortSignal.timeout(2000) })).json();
+    if (demoRun !== j.run) console.log(j.run ? '▶ demo resumed' : '■ demo stopped — no new chats');
+    demoRun = j.run;
+  } catch {}   // viz server absent → keep running standalone
+}
+
 let lastSize = Date.now();
 while (!stop) {
+  await checkDemo();
   if (!CONC_ARG && Date.now() - lastSize > 10_000){   // follow live pool scaling
     lastSize = Date.now();
     workerCount().then(n => { const c = n + OVERSUB; if (c !== concurrency){
       console.log(`pool is now ${n} workers — concurrency → ${c}`); concurrency = c; } });
   }
-  while (inFlight < concurrency && !stop) { chat(rand(agents)); await sleep(400); }
+  while (demoRun && inFlight < concurrency && !stop) { chat(rand(agents)); await sleep(400); }
   await sleep(jitter(INTERVAL));
 }
 while (inFlight > 0) await sleep(500);

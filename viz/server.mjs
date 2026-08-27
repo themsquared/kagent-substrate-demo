@@ -79,6 +79,21 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  if (req.url === '/demo') {
+    // master kill switch: stimulate.mjs polls this and stops dispatching
+    // real (billable) chats when run=false; surge respects it too
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', c => body += c);
+      req.on('end', () => {
+        try { demoRun = !!JSON.parse(body).run; } catch { demoRun = !demoRun; }
+        send({ type: 'demo_state', run: demoRun });
+        res.end(JSON.stringify({ ok: true, run: demoRun }));
+      });
+    } else res.end(JSON.stringify({ run: demoRun }));
+    return;
+  }
   if (req.url === '/surge' && req.method === 'POST') {
     res.setHeader('Content-Type', 'application/json');
     if (!LIVE) { res.end(JSON.stringify({ ok: false, error: 'not in --live mode' })); return; }
@@ -217,8 +232,11 @@ function broadcastQueue() {
   send({ type: 'queue', waiting: names.map(name => ({ name })) });
 }
 
+let demoRun = true;   // master switch for anything that costs LLM tokens
+
 // ── surge: server-driven burst of real chats across every SandboxAgent ───────
 async function surge() {
+  if (!demoRun) return 0;
   const list = await new Promise(res => {
     fetch(`${KAGENT_API}/api/agents`, { signal: AbortSignal.timeout(8000) })
       .then(r => r.json()).then(j => res(j.data ?? [])).catch(() => res([]));
@@ -266,6 +284,7 @@ function kubectl(args) {
 }
 
 function replayState(res) {
+  res.write(`data: ${JSON.stringify({ type: 'demo_state', run: demoRun })}\n\n`);
   if (metrics.length)
     res.write(`data: ${JSON.stringify({ type: 'metrics_history', points: metrics })}\n\n`);
   res.write(`data: ${JSON.stringify({ type: 'autoscale_state', on: autoscale })}\n\n`);

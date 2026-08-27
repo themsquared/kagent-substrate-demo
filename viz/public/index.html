@@ -138,6 +138,10 @@
                       border:1px solid rgba(125,214,232,.45)}
   .chip.checkpointing .st{color:var(--cold)}
   @keyframes pulse{50%{box-shadow:0 0 26px rgba(255,180,84,.32)}}
+  .chip.flashrun{animation:flashrun .8s ease-out 2}
+  @keyframes flashrun{0%{box-shadow:0 0 28px rgba(255,180,84,.55);border-color:rgba(255,180,84,.9)}
+                      100%{box-shadow:none}}
+  @media (prefers-reduced-motion:reduce){.chip.flashrun{animation:none}}
   .chip .bar{height:3px;border-radius:2px;background:rgba(255,255,255,.08);margin-top:5px;overflow:hidden;display:none}
   .chip.restoring .bar,.chip.checkpointing .bar{display:block}
   .chip .bar i{display:block;height:100%;width:40%;border-radius:2px;
@@ -509,6 +513,23 @@
         if (a.state !== 'queued')
           setState(a, 'cold', stored > 1 ? `${stored} snapshots · zst` : 'snapshot ✓ · zst');
       }
+      // a session can complete entirely between two polls — a new session
+      // actorId appearing for this agent proves the run happened even though
+      // we never sampled it on a worker. Count it and flash the chip.
+      const ids = new Set(entries.map(e => e.actorId));
+      if (a.knownIds){
+        let fresh = 0;
+        for (const id of ids) if (!a.knownIds.has(id)) fresh++;
+        const arrivedThisPass = pod && prev !== pod;
+        if (fresh > 0 && !pod && !arrivedThisPass){
+          totalSessions += fresh;
+          a.el.classList.remove('flashrun'); void a.el.offsetWidth;  // restart animation
+          a.el.classList.add('flashrun');
+          setTimeout(() => a.el.classList.remove('flashrun'), 1700);
+          log('run', `<b>session</b> ${a.ns}/${name} ran + checkpointed between samples (<0.8s)`);
+        }
+      }
+      a.knownIds = ids;
       liveAssign.set(name, pod);
     }
 

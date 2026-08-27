@@ -326,7 +326,7 @@ server.listen(PORT, () => {
       };
       pf();
     }
-    poll(); setInterval(poll, 1500);
+    poll(); setInterval(poll, 800);   // fast enough to catch ~1.5s Haiku sessions on a worker
     setTimeout(() => { sampleMetrics(); setInterval(sampleMetrics, 3000); }, 4000);
   }
 });

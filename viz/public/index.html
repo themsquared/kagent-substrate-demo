@@ -470,15 +470,28 @@
     const podByActorId = Object.fromEntries(
       wlist.filter(w => w.actorId).map(w => [w.actorId, w.workerPod]));
 
+    // Assignments come from the WORKERS list alone: it is small (≤ pool size)
+    // and reliable, and names the template directly. The actors list grows
+    // unbounded and returns partial under load — joining through it made
+    // running sessions invisible whenever their entry flickered out.
+    const asgByName = new Map();   // template name -> {pod, status?}
+    for (const w of wlist)
+      if (w.actorId && w.actorTemplate) asgByName.set(w.actorTemplate, w.workerPod);
+
     // One agent (template) can own MANY actor entries at once — its golden
     // actor plus one session actor per chat. The chip represents the agent:
-    // hot if ANY of its actors holds a worker; otherwise a stack of snapshots.
+    // hot if the workers list assigns it a pod; otherwise a stack of snapshots.
     const groups = new Map();
     for (const ae of s.actors ?? []){
       const name = ae.actorTemplateName || 'actor-'+String(ae.actorId).slice(0,8);
       if (!groups.has(name)) groups.set(name, []);
       groups.get(name).push(ae);
     }
+    // an assigned agent whose actor entries flickered out entirely still
+    // deserves its bay visit
+    for (const w of wlist)
+      if (w.actorId && w.actorTemplate && !groups.has(w.actorTemplate))
+        groups.set(w.actorTemplate, []);
 
     function farewell(a, name){
       if (a.worker){
@@ -491,11 +504,12 @@
     }
 
     for (const [name, entries] of groups){
-      const a = ensureActor(name, entries[0].actorTemplateNamespace || 'kagent');
-      const hot = entries.find(ae => podByActorId[ae.actorId]);
-      const pod = hot ? podByActorId[hot.actorId] : null;
+      const a = ensureActor(name, entries[0]?.actorTemplateNamespace || 'kagent');
+      const pod = asgByName.get(name) ?? null;
+      const hot = entries.find(ae => podByActorId[ae.actorId])
+               ?? (pod ? { status: 'Running' } : null);
       const prev = liveAssign.get(name) ?? null;
-      const stored = entries.length - (hot ? 1 : 0);
+      const stored = Math.max(0, entries.length - (pod ? 1 : 0));
       let effPod = pod, dwell = false;
       if (pod && byPod[pod]){
         const w = byPod[pod];

@@ -15,8 +15,8 @@
   *{box-sizing:border-box}
   html,body{height:100%}
   body{margin:0;background:var(--ground);color:var(--text);font-family:var(--sans);
-       font-size:14px;overflow:hidden}
-  .app{display:grid;grid-template-rows:auto 1fr;height:100vh;gap:12px;padding:14px}
+       font-size:14px;overflow-x:hidden;overflow-y:auto}
+  .app{display:flex;flex-direction:column;gap:12px;padding:14px;min-height:100vh}
 
   /* ── header ─────────────────────────────────────────── */
   header{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -47,9 +47,12 @@
   .stat .hotv{color:var(--hot)} .stat .coldv{color:var(--cold)} .stat .okv{color:var(--ok)}
 
   /* ── main grid ──────────────────────────────────────── */
-  .main{display:grid;grid-template-columns:1fr 320px;gap:12px;min-height:0}
+  .main{display:grid;grid-template-columns:1fr 320px;grid-template-rows:auto auto;gap:12px}
+  .main .graphs{grid-column:1 / -1}
+  .main .log-rail{max-height:560px}
   @media (max-width:900px){
-    .main{grid-template-columns:1fr;grid-template-rows:1fr minmax(140px,26vh)}
+    .main{grid-template-columns:1fr;grid-template-rows:auto auto auto}
+    .main .log-rail{max-height:220px;min-height:160px}
   }
 
   .stage{position:relative;display:grid;grid-template-rows:auto auto 1fr;gap:10px;min-height:0;min-width:0;align-content:start}
@@ -64,7 +67,7 @@
 
   /* worker bays */
   .bays{display:flex;gap:12px;flex-wrap:wrap}
-  .bay{position:relative;flex:1 1 140px;min-width:140px;height:118px;border-radius:10px;
+  .bay{position:relative;flex:1 1 140px;min-width:140px;height:100px;border-radius:10px;
        border:1px dashed var(--line);background:
          linear-gradient(var(--panel-2),var(--panel-2)) padding-box;
        transition:border-color .4s, box-shadow .6s}
@@ -89,6 +92,18 @@
                       color:var(--faint);font-family:var(--mono);font-size:10px;
                       letter-spacing:.15em;line-height:58px;padding-left:4px}
   .qslot{width:112px;height:58px;border-radius:9px;border:1px dashed rgba(255,180,84,.3)}
+
+  /* telemetry */
+  .graphs h2 .dot{background:#7BD88F;box-shadow:0 0 8px rgba(123,216,143,.7)}
+  .graphs .tabs{display:flex;gap:6px;margin-left:14px}
+  .tab{font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--muted);
+       background:var(--panel-2);border:1px solid var(--line);border-radius:6px;
+       padding:3px 9px;cursor:pointer;text-transform:uppercase}
+  .tab:hover{color:var(--text)}
+  .tab.active{color:var(--hot);border-color:rgba(255,180,84,.5)}
+  .tab:focus-visible{outline:2px solid var(--cold);outline-offset:1px}
+  #chart{width:100%;height:150px;display:block}
+  .surge.on{color:var(--ok);border-color:rgba(123,216,143,.5)}
 
   /* storage shelf — one permanent slot per actor; ghosted while its actor is hot */
   .shelf{display:flex;gap:10px;flex-wrap:wrap;align-content:flex-start;min-height:64px}
@@ -164,6 +179,8 @@
       <button class="surge" id="surge" title="invoke every idle agent at once">SURGE</button>
       <button class="surge" id="reset" title="bounce worker pods to free wedged slots (snapshots survive)"
               style="display:none">RESET POOL</button>
+      <button class="surge" id="autoscale" title="scale the pool automatically on queue depth / idle capacity"
+              style="display:none">AUTOSCALE: OFF</button>
     </div>
     <div class="stats">
       <div class="stat"><b id="s-actors" class="coldv">0</b><span>agents</span></div>
@@ -196,6 +213,17 @@
       <h2>Event feed</h2>
       <div class="log" id="log"></div>
     </aside>
+    <section class="zone graphs">
+      <h2><span class="dot"></span>Telemetry
+        <span class="tabs">
+          <button class="tab active" data-g="cpu">CPU</button>
+          <button class="tab" data-g="mem">Memory</button>
+          <button class="tab" data-g="active">Agents active</button>
+          <button class="tab" data-g="capacity">Capacity</button>
+        </span>
+        <span class="hint" id="g-legend"></span></h2>
+      <canvas id="chart" height="150"></canvas>
+    </section>
   </div>
 </div>
 
@@ -257,7 +285,7 @@
   }
   function bayRect(w){
     const r = w.el.getBoundingClientRect();
-    return { left: r.left + (r.width-132)/2, top: r.top + 40 };
+    return { left: r.left + (r.width-132)/2, top: r.top + 26 };
   }
   function shelfRect(a){
     const r = a.slot.getBoundingClientRect();
@@ -494,10 +522,91 @@
     refreshStats();
   }
 
+  // ── telemetry charts ───────────────────────────────────
+  const points = [];               // {t,wCpu,wMem,benchCpu,benchMem,active,slots,queued,agents}
+  const chart = $('chart');
+  let curTab = 'cpu';
+  const LEGENDS = {
+    cpu:      'solid: workerpool actual mCPU · dotted: same agents as always-on pods',
+    mem:      'solid: workerpool actual MiB · dotted: same agents as always-on pods',
+    active:   'agents on workers right now · dashed: running average',
+    capacity: 'occupied worker slots, % of pool',
+  };
+  function pushPoint(p){
+    points.push(p);
+    if (points.length > 1200) points.shift();
+    drawChart();
+  }
+  function drawChart(){
+    const W = chart.clientWidth, H = 150;
+    if (!W) return;
+    const dpr = devicePixelRatio || 1;
+    chart.width = W * dpr; chart.height = H * dpr;
+    const g = chart.getContext('2d');
+    g.scale(dpr, dpr);
+    $('g-legend').textContent = LEGENDS[curTab];
+    if (points.length < 2) return;
+    const pad = { l: 46, r: 10, t: 10, b: 18 };
+    const iw = W - pad.l - pad.r, ih = H - pad.t - pad.b;
+    const sel = {
+      cpu:      [p => p.wCpu,  p => p.benchCpu],
+      mem:      [p => p.wMem,  p => p.benchMem],
+      active:   [p => p.active, null],
+      capacity: [p => p.slots ? Math.round(p.active / p.slots * 100) : 0, () => 100],
+    }[curTab];
+    const solidV = points.map(sel[0]);
+    const dotV = sel[1] ? points.map(sel[1]) : null;
+    let max = Math.max(...solidV, ...(dotV ?? [0]), 1) * 1.15;
+    if (curTab === 'capacity') max = 110;
+    const x = i => pad.l + i / (points.length - 1) * iw;
+    const y = v => pad.t + ih - (v / max) * ih;
+    g.font = '9px IBM Plex Mono, monospace';
+    for (let i = 0; i <= 4; i++){                        // grid + axis labels
+      const v = max / 4 * i, yy = y(v);
+      g.strokeStyle = 'rgba(138,145,168,.12)'; g.beginPath();
+      g.moveTo(pad.l, yy); g.lineTo(W - pad.r, yy); g.stroke();
+      g.fillStyle = '#5A6180'; g.textAlign = 'right';
+      g.fillText(Math.round(v) + ({cpu:'m',mem:'Mi',active:'',capacity:'%'}[curTab]), pad.l - 6, yy + 3);
+    }
+    const line = (vals, color, dash, fill) => {
+      g.setLineDash(dash); g.strokeStyle = color; g.lineWidth = 1.6;
+      g.beginPath();
+      vals.forEach((v, i) => i ? g.lineTo(x(i), y(v)) : g.moveTo(x(i), y(v)));
+      g.stroke(); g.setLineDash([]);
+      if (fill){ g.lineTo(x(vals.length - 1), y(0)); g.lineTo(x(0), y(0)); g.closePath();
+                 g.fillStyle = fill; g.fill(); }
+    };
+    line(solidV, '#FFB454', [], 'rgba(255,180,84,.08)');
+    if (dotV) line(dotV, '#7DD6E8', [5, 4]);
+    if (curTab === 'active'){                            // running average
+      let s = 0; const avg = solidV.map((v, i) => (s += v, s / (i + 1)));
+      line(avg, '#7BD88F', [2, 3]);
+    }
+    const last = solidV[solidV.length - 1];              // emphasized endpoint
+    g.fillStyle = '#FFB454'; g.beginPath();
+    g.arc(x(solidV.length - 1), y(last), 2.5, 0, 7); g.fill();
+    g.textAlign = 'left'; g.fillStyle = '#8A91A8';
+    const span = Math.round((points[points.length-1].t - points[0].t) / 60000);
+    g.fillText(`last ${span || '<1'} min`, pad.l, H - 5);
+  }
+  document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    b.classList.add('active'); curTab = b.dataset.g; drawChart();
+  });
+  addEventListener('resize', drawChart);
+
   // ── event handler (shared by simulator + SSE live feed) ─
   function handle(ev){
     switch (ev.type){
       case 'snapshot': applySnapshot(ev); break;
+      case 'metrics': pushPoint(ev.p); break;
+      case 'metrics_history': points.length = 0; points.push(...ev.points); drawChart(); break;
+      case 'autoscale':
+        log('info', `<b>autoscale</b> ${ev.ok ? '' : 'FAILED '}→ ${ev.replicas} workers (${ev.why})`); break;
+      case 'autoscale_state': {
+        const b = $('autoscale');
+        b.textContent = 'AUTOSCALE: ' + (ev.on ? 'ON' : 'OFF');
+        b.classList.toggle('on', ev.on); break; }
       case 'queue': {   // live mode: agents whose requests are bouncing off a full pool
         const want = new Set((ev.waiting ?? []).map(w => w.name ?? w));
         const now = Date.now();
@@ -551,8 +660,8 @@
           el.classList.toggle('live', !sim);
           // live mode: workers buttons drive the real CR; sim-only controls hide
           $('a-up').parentElement.style.display = sim ? '' : 'none';
-          $('surge').style.display = sim ? '' : 'none';
           $('reset').style.display = sim ? 'none' : '';
+          $('autoscale').style.display = sim ? 'none' : '';
           if (!sim) stopSim();
           return; }
         handle(ev);
@@ -621,17 +730,44 @@
       .catch(() => log('info', '<b>reset</b> request failed'));
   };
   $('surge').onclick = () => {
+    if (!sim){
+      log('info', '<b>surge</b> — firing one real chat at every agent');
+      fetch('/surge', { method:'POST' }).then(r => r.json())
+        .then(j => log('info', `<b>surge</b> ${j.ok ? j.fired+' chats dispatched' : 'FAILED: '+j.error}`))
+        .catch(() => log('info', '<b>surge</b> request failed'));
+      return;
+    }
     const idle = Object.keys(actors).filter(n => actors[n].state === 'cold');
     log('info', `<b>surge</b> — invoking ${idle.length} idle agents at once`);
     idle.forEach((n,i) => later(() =>
       handle({ type:'restore', name:n, ms: 240 + Math.round(Math.random()*520) }), i*90));
   };
+  $('autoscale').onclick = () => {
+    const want = $('autoscale').textContent.includes('OFF');
+    fetch('/autoscale', { method:'POST', body: JSON.stringify({ on: want }) }).catch(() => {});
+  };
+
+  // synthetic telemetry so the charts live in sim mode too
+  function simMetrics(){
+    if (!sim) return;
+    const vals = Object.values(actors);
+    const running = vals.filter(a => a.state==='running' || a.state==='restoring').length;
+    const queuedC = vals.filter(a => a.state==='queued').length;
+    const n = vals.length;
+    pushPoint({ t: Date.now(),
+      wCpu: Math.round(30 + 14*workers.length + 60*running + Math.random()*12),
+      wMem: Math.round(14*workers.length + 120*running + Math.random()*8),
+      benchCpu: n*7, benchMem: n*204,        // measured always-on agent pod cost
+      active: running, slots: workers.length, queued: queuedC, agents: n });
+    later(simMetrics, 2000);
+  }
 
   function startSim(){
     if (!sim) return;   // a LIVE mode event beat us to it
     handle({ type:'pool', replicas:3, name:'kagent-default' });
     for (let i=0;i<12;i++) later(addAgent, 120*i);
     later(demand, 1600);
+    later(simMetrics, 1000);
     log('info', '<b>substrate scope</b> simulated feed — hit SURGE, then scale workers +');
   }
   // give a server-sent mode event a beat to arrive before the simulator starts

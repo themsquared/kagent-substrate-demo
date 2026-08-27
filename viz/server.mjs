@@ -166,7 +166,8 @@ async function sampleMetrics() {
 // ── autoscaler: demand-driven (queue depth up, idle capacity down) ───────────
 // CPU is the wrong signal here: workers are slot-bound, and LLM turns are
 // mostly I/O wait. Demand (queued + busy) vs slots is what actually matters.
-let autoscale = false, lastScaleAt = 0, upStreak = 0, downStreak = 0;
+let autoscale = LIVE && !process.argv.includes('--no-autoscale'),
+    lastScaleAt = 0, upStreak = 0, downStreak = 0;
 const AS = { MIN: 2, MAX: 8, COOL_UP: 12_000, COOL_DOWN: 45_000,
              UP_TICKS: 2, DOWN_TICKS: 12 };
 

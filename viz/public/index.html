@@ -534,7 +534,9 @@
         let fresh = 0;
         for (const id of ids) if (!a.knownIds.has(id)) fresh++;
         const arrivedThisPass = pod && prev !== pod;
-        if (fresh > 0 && !pod && !arrivedThisPass && !dwell){
+        // >2 "new" ids at once means the inventory list flickered (partial
+        // response under load), not real sessions — resync silently
+        if (fresh > 0 && fresh <= 2 && !pod && !arrivedThisPass && !dwell){
           totalSessions += fresh;
           a.el.classList.remove('flashrun'); void a.el.offsetWidth;  // restart animation
           a.el.classList.add('flashrun');

@@ -2,6 +2,8 @@
 
 Workspace for becoming the kagent + Agent Substrate expert at Solo.
 
+📝 **Write-up**: [Thousands of AI Agents on Tens of Pods: kagent Agent Substrate](https://webofmike.com/kagent-agent-substrate/) — the full story of this repo: the install, the visualizer, the autoscaler, and every gotcha, with verbatim errors and fixes.
+
 ## What Agent Substrate is (one paragraph)
 
 Agent Substrate is a Kubernetes-native runtime for AI agents that breaks the

@@ -51,6 +51,19 @@ const server = createServer(async (req, res) => {
     });
     return;
   }
+  if (req.url === '/reset' && req.method === 'POST') {
+    // frees workers pinned by ghost actors (v0.0.6 wedge after aborted
+    // sessions): bounce the WorkerPool's deployment; snapshots survive
+    res.setHeader('Content-Type', 'application/json');
+    if (!LIVE) { res.end(JSON.stringify({ ok: false, error: 'not in --live mode' })); return; }
+    const pool = Object.values(state.pools)[0];
+    if (!pool) { res.end(JSON.stringify({ ok: false, error: 'no workerpool seen yet' })); return; }
+    execFile('kubectl', ['rollout', 'restart', `deploy/${pool.name}-deployment`, '-n', pool.ns],
+      { timeout: 15_000 },
+      err => res.end(JSON.stringify(err ? { ok: false, error: String(err.message).slice(0, 200) }
+                                        : { ok: true })));
+    return;
+  }
   if (req.url === '/queue' && req.method === 'POST') {
     // stimulate.mjs reports which agents are waiting on a full pool (substrate
     // rejects rather than queues, so the retry-queue lives client-side)

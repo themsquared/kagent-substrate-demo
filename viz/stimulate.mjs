@@ -20,7 +20,8 @@ const LOAD = arg('load', 0.6);         // fraction of long-form prompts
 // --concurrency N to pin; otherwise auto-sized to (live worker count +
 // oversub) so every bay stays lit AND a visible retry-queue forms.
 const CONC_ARG = arg('concurrency', 0);
-const OVERSUB = arg('oversub', 2);     // extra in-flight beyond the pool size
+const OVERSUB = arg('oversub', 4);     // extra in-flight beyond the pool size —
+                                       // deep enough that queued agents visibly wait their turn
 
 const QUICK_PROMPTS = [
   'In one short sentence, what is your job?',

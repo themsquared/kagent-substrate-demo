@@ -160,6 +160,8 @@
         <button id="a-dn" aria-label="fewer agents">−</button>
         <button id="a-up" aria-label="more agents">+</button></div>
       <button class="surge" id="surge" title="invoke every idle agent at once">SURGE</button>
+      <button class="surge" id="reset" title="bounce worker pods to free wedged slots (snapshots survive)"
+              style="display:none">RESET POOL</button>
     </div>
     <div class="stats">
       <div class="stat"><b id="s-actors" class="coldv">0</b><span>agents</span></div>
@@ -453,7 +455,9 @@
                  hot.status || 'assigned');
       } else {
         if (prev) farewell(a, name);
-        setState(a, 'cold', stored > 1 ? `${stored} snapshots · zst` : 'snapshot ✓ · zst');
+        // don't clobber a queued chip — the queue feed owns that state
+        if (a.state !== 'queued')
+          setState(a, 'cold', stored > 1 ? `${stored} snapshots · zst` : 'snapshot ✓ · zst');
       }
       liveAssign.set(name, pod);
     }
@@ -474,13 +478,23 @@
       case 'snapshot': applySnapshot(ev); break;
       case 'queue': {   // live mode: agents whose requests are bouncing off a full pool
         const want = new Set((ev.waiting ?? []).map(w => w.name ?? w));
+        const now = Date.now();
         for (const n in actors){
           const a = actors[n];
-          if (want.has(n) && a.state === 'cold'){
-            setState(a, 'queued', 'waiting for worker');
-            log('queue', `<b>queued</b> ${a.ns}/${n} — all workers busy`);
-          } else if (!want.has(n) && a.state === 'queued'){
-            setState(a, 'cold', 'snapshot ✓ · zst');
+          if (want.has(n)){
+            if (a.state === 'cold'){
+              setState(a, 'queued', 'waiting for worker');
+              a.queuedAt = now;
+              log('queue', `<b>queued</b> ${a.ns}/${n} — all workers busy`);
+            }
+          } else if (a.state === 'queued'){
+            // hold the queued look ≥2.5s so fast drains still register visually
+            // (a restore meanwhile wins immediately via the snapshot path)
+            const rest = Math.max(0, 2500 - (now - (a.queuedAt ?? 0)));
+            setTimeout(() => {
+              if (a.state === 'queued' && Date.now() - (a.queuedAt ?? 0) >= 2400)
+                setState(a, 'cold', 'snapshot ✓ · zst');
+            }, rest);
           }
         }
         break; }
@@ -516,6 +530,7 @@
           // live mode: workers buttons drive the real CR; sim-only controls hide
           $('a-up').parentElement.style.display = sim ? '' : 'none';
           $('surge').style.display = sim ? '' : 'none';
+          $('reset').style.display = sim ? 'none' : '';
           if (!sim) stopSim();
           return; }
         handle(ev);
@@ -577,6 +592,12 @@
   $('w-dn').onclick = () => scale(-1);
   $('a-up').onclick = addAgent;
   $('a-dn').onclick = () => { if (removeActor()) log('info', '<b>deleted</b> idle agent'); };
+  $('reset').onclick = () => {
+    log('info', '<b>reset</b> bouncing worker pods — freeing wedged slots');
+    fetch('/reset', { method:'POST' }).then(r => r.json())
+      .then(j => log('info', `<b>reset</b> ${j.ok ? 'rollout restarted' : 'FAILED: '+j.error}`))
+      .catch(() => log('info', '<b>reset</b> request failed'));
+  };
   $('surge').onclick = () => {
     const idle = Object.keys(actors).filter(n => actors[n].state === 'cold');
     log('info', `<b>surge</b> — invoking ${idle.length} idle agents at once`);

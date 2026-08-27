@@ -67,7 +67,7 @@
 
   /* worker bays */
   .bays{display:flex;gap:12px;flex-wrap:wrap}
-  .bay{position:relative;flex:1 1 140px;min-width:140px;height:100px;border-radius:10px;
+  .bay{position:relative;flex:1 1 148px;min-width:148px;height:108px;border-radius:10px;
        border:1px dashed var(--line);background:
          linear-gradient(var(--panel-2),var(--panel-2)) padding-box;
        transition:border-color .4s, box-shadow .6s}
@@ -91,7 +91,7 @@
   .qlane:empty::after{content:'no backpressure — all demand served';
                       color:var(--faint);font-family:var(--mono);font-size:10px;
                       letter-spacing:.15em;line-height:58px;padding-left:4px}
-  .qslot{width:112px;height:58px;border-radius:9px;border:1px dashed rgba(255,180,84,.3)}
+  .qslot{width:128px;height:62px;border-radius:9px;border:1px dashed rgba(255,180,84,.3)}
 
   /* telemetry */
   .graphs h2 .dot{background:#7BD88F;box-shadow:0 0 8px rgba(123,216,143,.7)}
@@ -107,24 +107,28 @@
 
   /* storage shelf — one permanent slot per actor; ghosted while its actor is hot */
   .shelf{display:flex;gap:10px;flex-wrap:wrap;align-content:flex-start;min-height:64px}
-  .slot{width:112px;height:58px;border-radius:9px;border:1px dashed transparent;
+  .slot{width:128px;height:62px;border-radius:9px;border:1px dashed transparent;
         transition:border-color .4s}
   .slot.away{border-color:rgba(125,214,232,.22)}
-  .slot.away::after{content:'· · ·';display:block;text-align:center;line-height:56px;
+  .slot.away::after{content:'· · ·';display:block;text-align:center;line-height:60px;
                     color:var(--faint);font-family:var(--mono);font-size:10px;letter-spacing:.3em}
 
-  /* ── actor chips ────────────────────────────────────── */
-  .chip{position:absolute;width:132px;border-radius:9px;padding:8px 10px;cursor:default;
-        font-family:var(--mono);
-        transition:transform .55s cubic-bezier(.22,.9,.3,1.1), width .4s, background .4s,
+  /* ── actor chips — ONE geometry everywhere: 128×62, single-line rows ── */
+  .chip{position:absolute;width:128px;height:62px;border-radius:9px;padding:7px 10px;
+        box-sizing:border-box;overflow:hidden;cursor:default;font-family:var(--mono);
+        transition:transform .55s cubic-bezier(.22,.9,.3,1.1), background .4s,
                    border-color .4s, box-shadow .4s;
         will-change:transform}
-  .chip .nm{font-size:11px;font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .chip .st{font-size:9px;letter-spacing:.1em;text-transform:uppercase;margin-top:3px}
-  .chip .meta{font-size:9px;color:var(--faint);margin-top:3px;font-variant-numeric:tabular-nums}
-  .chip.cold{background:var(--cold-dim);border:1px solid rgba(125,214,232,.35);width:112px}
+  .chip .nm{font-size:11px;font-weight:500;line-height:1.3;
+            white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chip .st{font-size:9px;letter-spacing:.1em;text-transform:uppercase;margin-top:2px;
+            line-height:1.3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chip .meta{font-size:9px;color:var(--faint);margin-top:2px;line-height:1.3;
+              font-variant-numeric:tabular-nums;
+              white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .chip.cold{background:var(--cold-dim);border:1px solid rgba(125,214,232,.35)}
   .chip.cold .st{color:var(--cold)}
-  .chip.queued{background:var(--cold-dim);border:1px dashed rgba(255,180,84,.65);width:112px;
+  .chip.queued{background:var(--cold-dim);border:1px dashed rgba(255,180,84,.65);
                animation:knock 1.2s ease-in-out infinite}
   .chip.queued .st{color:var(--hot)}
   @keyframes knock{50%{box-shadow:0 0 14px rgba(255,180,84,.25)}}
@@ -142,7 +146,9 @@
   @keyframes flashrun{0%{box-shadow:0 0 28px rgba(255,180,84,.55);border-color:rgba(255,180,84,.9)}
                       100%{box-shadow:none}}
   @media (prefers-reduced-motion:reduce){.chip.flashrun{animation:none}}
-  .chip .bar{height:3px;border-radius:2px;background:rgba(255,255,255,.08);margin-top:5px;overflow:hidden;display:none}
+  /* during restore/checkpoint the progress bar replaces the meta line */
+  .chip .bar{height:3px;border-radius:2px;background:rgba(255,255,255,.08);margin-top:6px;overflow:hidden;display:none}
+  .chip.restoring .meta,.chip.checkpointing .meta{display:none}
   .chip.restoring .bar,.chip.checkpointing .bar{display:block}
   .chip .bar i{display:block;height:100%;width:40%;border-radius:2px;
                background:linear-gradient(90deg,var(--cold),var(--hot));
@@ -289,7 +295,7 @@
   }
   function bayRect(w){
     const r = w.el.getBoundingClientRect();
-    return { left: r.left + (r.width-132)/2, top: r.top + 26 };
+    return { left: r.left + (r.width-128)/2, top: r.top + 25 };
   }
   function shelfRect(a){
     const r = a.slot.getBoundingClientRect();

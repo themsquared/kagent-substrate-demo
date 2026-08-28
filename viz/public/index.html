@@ -296,7 +296,7 @@
   const workers = [];   // {id, el, actor, sessions}
   const actors  = {};   // name -> {name, ns, el, slot, state, worker, kb}
   const queue   = [];   // actor names waiting for a free worker
-  let totalSessions = 0, lastRestore = null;
+  let totalSessions = 0, lastRestore = null, lastRestoreAt = null;
 
   function setWorkers(n, warm){
     n = Math.max(1, Math.min(8, n));
@@ -412,6 +412,7 @@
       if (state === 'cold'){ a.slot.classList.remove('away'); placeAt(a.el, shelfRect(a)); }
       reflowCold();   // remaining queued chips shift left in the lane
     }
+    if (drawerAgent === a.name && was !== state) renderDrawer();
   }
   function rectOf(el){ const r = el.getBoundingClientRect(); return { left:r.left, top:r.top }; }
 
@@ -426,6 +427,7 @@
     setState(a, 'restoring', `← s3://ate-snapshots/${a.ns}`);
     placeAt(a.el, bayRect(w));
     lastRestore = ms || lastRestore;
+    lastRestoreAt = Date.now();
     refreshStats();
     log('restore', `<b>restore</b> ${a.ns}/${a.name} → worker-${w.id} ${ms?`(${ms} ms)`:''}`);
     actPush(a.name, 'restore', `restored from snapshot → worker-${w.id}`, ms);
@@ -471,7 +473,8 @@
     }
   }
   addEventListener('resize', reflowAll);
-  setInterval(reflowAll, 1000);
+  setInterval(() => { reflowAll(); refreshStats();
+                      if (drawerAgent) renderDrawer(); }, 1000);
 
   // ── stats + log ────────────────────────────────────────
   function refreshStats(){
@@ -480,7 +483,11 @@
     $('s-workers').textContent = workers.length;
     $('s-density').textContent = workers.length ? (n/workers.length).toFixed(1)+'×' : '—';
     $('s-sessions').textContent = totalSessions;
-    $('s-cold').textContent = lastRestore ? lastRestore+' ms' : '—';
+    // sim knows restore latency (ms); live only knows when the last restore
+    // was observed, so it shows freshness instead of a misleading dash
+    $('s-cold').textContent = lastRestore ? lastRestore+' ms'
+      : lastRestoreAt ? Math.max(0, Math.round((Date.now()-lastRestoreAt)/1000)) + 's ago'
+      : '—';
   }
   function log(kind, msg){
     const d = document.createElement('div');
@@ -585,6 +592,7 @@
           placeAt(a.el, bayRect(w));
           log('restore', `<b>restore</b> ${a.ns}/${name} → ${pod}`);
           actPush(name, 'restore', `restored from snapshot → ${pod}`);
+          lastRestoreAt = Date.now();
         }
         const st = String(hot.status || '').toLowerCase();
         setState(a, (st.includes('restor')||st.includes('resum')) ? 'restoring' : 'running',

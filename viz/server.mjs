@@ -260,6 +260,54 @@ function recordActivity(ev) {
   send({ type: 'activity', e });
 }
 
+// ── ingest kagent-UI chats from the sessions API ──────────────────────────────
+// Chats sent from the kagent UI don't self-report like stimulate/surge do, so
+// live mode polls kagent's session store and folds them into the same
+// activity stream. Our own traffic is skipped by contextId prefix.
+const KAGENT_USER = process.env.KAGENT_USER || 'admin@kagent.dev';
+const OWN_SESSION = /^(stim|surge|speed|probe|haiku|model)-/;
+const seenTasks = new Map();          // taskId -> last observed state
+let sessionsSince = Date.now() - 120_000;
+const agentFromAdk = app => {
+  const i = (app ?? '').indexOf('__NS__');
+  return i > 0 ? app.slice(i + 6).replace(/_/g, '-') : (app || 'unknown');
+};
+async function pollSessions() {
+  try {
+    const q = `user_id=${encodeURIComponent(KAGENT_USER)}`;
+    const r = await fetch(`${KAGENT_API}/api/sessions?${q}`, { signal: AbortSignal.timeout(5000) });
+    const j = await r.json();
+    const fresh = (j.data ?? []).filter(s => !OWN_SESSION.test(s.id)
+      && new Date(s.updated_at).getTime() > sessionsSince - 5000);
+    sessionsSince = Date.now();
+    for (const s of fresh.slice(0, 10)) {
+      const tr = await fetch(`${KAGENT_API}/api/sessions/${s.id}/tasks?${q}`,
+                             { signal: AbortSignal.timeout(5000) });
+      const tj = await tr.json();
+      for (const task of tj.data ?? []) {
+        const state = task.status?.state;
+        const prev = seenTasks.get(task.id);
+        if (prev === state) continue;
+        const agent = agentFromAdk(task.metadata?.adk_app_name);
+        if (prev === undefined) {
+          const um = (task.history ?? []).find(m => m.role === 'user');
+          const text = (um?.parts ?? []).map(p => p.text).filter(Boolean).join(' ');
+          if (text) recordActivity({ agent, kind: 'prompt', text: text.slice(0, 400), via: 'kagent-ui' });
+        }
+        if (state === 'completed' || state === 'failed') {
+          const parts = [...(task.status?.message?.parts ?? []),
+                         ...((task.artifacts ?? []).flatMap(a => a.parts ?? []))];
+          const text = parts.map(p => p.text).filter(Boolean).join(' ').slice(0, 400);
+          recordActivity({ agent, kind: state === 'failed' ? 'error' : 'reply',
+                           text: text || '(no text)', via: 'kagent-ui' });
+        }
+        seenTasks.set(task.id, state);
+        if (seenTasks.size > 500) seenTasks.delete(seenTasks.keys().next().value);
+      }
+    }
+  } catch {}
+}
+
 // ── queue bookkeeping: union of stimulator-reported and surge-local waits ─────
 let stimWaiting = [];                 // names reported by stimulate.mjs
 const surgeWaiting = new Set();       // names of surge chats bouncing off a full pool
@@ -415,5 +463,6 @@ server.listen(PORT, () => {
     poll(); setInterval(poll, 800);   // fast enough to catch ~1.5s Haiku sessions on a worker
     fetchUnit();
     setTimeout(() => { sampleMetrics(); setInterval(sampleMetrics, 3000); }, 4000);
+    setTimeout(() => { pollSessions(); setInterval(pollSessions, 2500); }, 3000);
   }
 });

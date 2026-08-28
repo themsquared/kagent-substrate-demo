@@ -649,10 +649,10 @@
   // ── per-agent activity + drawer ────────────────────────
   const agentAct = new Map();     // name -> [{t, kind, text, ms}]
   let drawerAgent = null;
-  function actPush(name, kind, text, ms){
+  function actPush(name, kind, text, ms, via){
     if (!agentAct.has(name)) agentAct.set(name, []);
     const list = agentAct.get(name);
-    list.push({ t: Date.now(), kind, text, ms });
+    list.push({ t: Date.now(), kind, text, ms, via });
     if (list.length > 80) list.shift();
     if (drawerAgent === name) renderDrawer();
   }
@@ -690,7 +690,8 @@
       d.className = 'd-entry k-' + e.kind;
       const time = new Date(e.t).toTimeString().slice(0, 8);
       const ms = e.ms ? ` · ${(e.ms / 1000).toFixed(1)}s` : '';
-      d.innerHTML = `<div class="d-kind">${e.kind}${ms}<span class="d-t">${time}</span></div>
+      const via = e.via ? ` · ${e.via}` : '';
+      d.innerHTML = `<div class="d-kind">${e.kind}${ms}${via}<span class="d-t">${time}</span></div>
                      <div class="d-text"></div>`;
       d.querySelector('.d-text').textContent = e.text ?? '';
       body.appendChild(d);
@@ -782,7 +783,7 @@
   function handle(ev){
     switch (ev.type){
       case 'snapshot': applySnapshot(ev); break;
-      case 'activity': actPush(ev.e.agent, ev.e.kind, ev.e.text, ev.e.ms); break;
+      case 'activity': actPush(ev.e.agent, ev.e.kind, ev.e.text, ev.e.ms, ev.e.via); break;
       case 'activity_history':
         for (const e of ev.items ?? []){
           if (!agentAct.has(e.agent)) agentAct.set(e.agent, []);

@@ -45,6 +45,8 @@ port-forwards it).
 open public/index.html            # or: node server.mjs → http://localhost:8123
 
 # Live mode — points at your current kubectl context (e.g. the lab 1 kind cluster)
+# Also port-forwards the kagent UI to http://localhost:8001 (KAGENT_UI_PORT to
+# change): chat with any agent there and watch its actor restore on the board.
 node server.mjs --live
 ```
 

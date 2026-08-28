@@ -403,12 +403,14 @@ server.listen(PORT, () => {
   console.log(`Substrate Scope → http://localhost:${PORT}  (${LIVE ? 'LIVE, polling the cluster' : 'simulated'})`);
   if (LIVE) {
     if (!process.env.KAGENT_API) {
-      const pf = () => {
-        const c = spawn('kubectl', ['port-forward', '-n', 'kagent',
-                        'svc/kagent-controller', '8083:8083'], { stdio: 'ignore' });
-        c.on('exit', () => setTimeout(pf, 2000));   // survive pod restarts
+      const forward = (svc, ports) => {
+        const c = spawn('kubectl', ['port-forward', '-n', 'kagent', svc, ports],
+                        { stdio: 'ignore' });
+        c.on('exit', () => setTimeout(() => forward(svc, ports), 2000)); // survive pod restarts
       };
-      pf();
+      forward('svc/kagent-controller', '8083:8083');
+      forward('svc/kagent-ui', `${process.env.KAGENT_UI_PORT || 8001}:8080`);
+      console.log(`kagent UI → http://localhost:${process.env.KAGENT_UI_PORT || 8001}  (chat with agents to light up the board)`);
     }
     poll(); setInterval(poll, 800);   // fast enough to catch ~1.5s Haiku sessions on a worker
     fetchUnit();

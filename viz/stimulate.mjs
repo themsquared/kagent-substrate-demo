@@ -79,11 +79,18 @@ function reportQueue(){
   }, 150);
 }
 
+// feed the board's per-agent activity drawer (fire-and-forget)
+function reportActivity(ev){
+  fetch(`${VIZ}/activity`, { method: 'POST', body: JSON.stringify(ev),
+    signal: AbortSignal.timeout(2000) }).catch(() => {});
+}
+
 async function chat(agentRef) {
   const [ns, name] = agentRef.split('/');
   const prompt = Math.random() < LOAD ? rand(LONG_PROMPTS) : rand(QUICK_PROMPTS);
   const id = `stim-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
   inFlight++; sent++;
+  reportActivity({ agent: name, kind: 'prompt', text: prompt, via: 'stimulator' });
   try {
     while (!stop) {
       const t0 = Date.now();
@@ -107,13 +114,17 @@ async function chat(agentRef) {
       const text = j.result?.artifacts?.flatMap(a => a.parts ?? [])
                      .map(p => p.text).filter(Boolean).join(' ') ?? '';
       const secs = ((Date.now() - t0) / 1000).toFixed(1);
-      if (j.error) { failed++; console.log(`✗ ${name} (${secs}s): ${j.error.message?.slice(0, 90)}`); }
-      else { ok++; console.log(`✓ ${name} (${secs}s): ${text.slice(0, 90) || '(no text)'}`); }
+      const ms = Date.now() - t0;
+      if (j.error) { failed++; console.log(`✗ ${name} (${secs}s): ${j.error.message?.slice(0, 90)}`);
+        reportActivity({ agent: name, kind: 'error', text: j.error.message?.slice(0, 300), ms }); }
+      else { ok++; console.log(`✓ ${name} (${secs}s): ${text.slice(0, 90) || '(no text)'}`);
+        reportActivity({ agent: name, kind: 'reply', text: text.slice(0, 400) || '(no text)', ms }); }
       break;
     }
   } catch (e) {
     if (waiting.delete(name)) reportQueue();
     failed++; console.log(`✗ ${name}: ${String(e.message).slice(0, 90)}`);
+    reportActivity({ agent: name, kind: 'error', text: String(e.message).slice(0, 200) });
   } finally { inFlight--; }
 }
 

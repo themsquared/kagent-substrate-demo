@@ -94,6 +94,16 @@ const server = createServer(async (req, res) => {
     } else res.end(JSON.stringify({ run: demoRun }));
     return;
   }
+  if (req.url === '/activity' && req.method === 'POST') {
+    let body = '';
+    req.on('data', c => body += c);
+    req.on('end', () => {
+      res.setHeader('Content-Type', 'application/json');
+      try { recordActivity(JSON.parse(body)); res.end('{"ok":true}'); }
+      catch { res.writeHead(400); res.end('{"ok":false}'); }
+    });
+    return;
+  }
   if (req.url === '/surge' && req.method === 'POST') {
     res.setHeader('Content-Type', 'application/json');
     if (!LIVE) { res.end(JSON.stringify({ ok: false, error: 'not in --live mode' })); return; }
@@ -237,6 +247,19 @@ function autoscaleTick(point) {
   }
 }
 
+// ── per-agent activity: prompts, replies, latency — the "click into an agent"
+//    stream. Reported by stimulate.mjs and surge (in-sandbox stdout is not
+//    reachable: substrate exposes network ingress only, so chat I/O IS the
+//    agent's observable output).
+const activity = [];
+const ACT_MAX = 400;
+function recordActivity(ev) {
+  const e = { t: Date.now(), ...ev };
+  activity.push(e);
+  if (activity.length > ACT_MAX) activity.shift();
+  send({ type: 'activity', e });
+}
+
 // ── queue bookkeeping: union of stimulator-reported and surge-local waits ─────
 let stimWaiting = [];                 // names reported by stimulate.mjs
 const surgeWaiting = new Set();       // names of surge chats bouncing off a full pool
@@ -267,13 +290,16 @@ async function surge() {
 async function surgeChat(ref) {
   const [ns, name] = ref.split('/');
   const id = `surge-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+  const prompt = 'Explain in about 120 words what you would do first in a production incident.';
+  recordActivity({ agent: name, kind: 'prompt', text: prompt, via: 'surge' });
+  const t0 = Date.now();
   for (let tries = 0; tries < 60; tries++) {
     try {
       const r = await fetch(`${KAGENT_API}/api/a2a-sandboxes/${ns}/${name}/`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jsonrpc: '2.0', id, method: 'message/send',
           params: { message: { kind: 'message', messageId: id, contextId: id, role: 'user',
-            parts: [{ kind: 'text', text: 'Explain in about 120 words what you would do first in a production incident.' }] } } }),
+            parts: [{ kind: 'text', text: prompt }] } } }),
         signal: AbortSignal.timeout(180_000),
       });
       const j = await r.json();
@@ -282,8 +308,15 @@ async function surgeChat(ref) {
         await new Promise(res => setTimeout(res, 1500 + Math.random() * 1500));
         continue;
       }
+      const ms = Date.now() - t0;
+      if (j.error) recordActivity({ agent: name, kind: 'error', text: j.error.message?.slice(0, 300), ms });
+      else {
+        const text = (j.result?.artifacts ?? []).flatMap(a => a.parts ?? [])
+          .map(p => p.text).filter(Boolean).join(' ');
+        recordActivity({ agent: name, kind: 'reply', text: text.slice(0, 400) || '(no text)', ms });
+      }
       break;
-    } catch { break; }
+    } catch (e) { recordActivity({ agent: name, kind: 'error', text: String(e.message).slice(0, 200) }); break; }
   }
   if (surgeWaiting.delete(name)) broadcastQueue();
 }
@@ -299,6 +332,8 @@ function kubectl(args) {
 
 function replayState(res) {
   res.write(`data: ${JSON.stringify({ type: 'demo_state', run: demoRun })}\n\n`);
+  if (activity.length)
+    res.write(`data: ${JSON.stringify({ type: 'activity_history', items: activity.slice(-200) })}\n\n`);
   if (metrics.length)
     res.write(`data: ${JSON.stringify({ type: 'metrics_history', points: metrics })}\n\n`);
   res.write(`data: ${JSON.stringify({ type: 'autoscale_state', on: autoscale })}\n\n`);

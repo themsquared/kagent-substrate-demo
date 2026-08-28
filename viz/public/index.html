@@ -173,6 +173,44 @@
     .chip.running,.chip.queued{animation:none}
     .chip .bar i{animation:none;width:100%}
   }
+
+  /* ── agent drawer (click a chip) ────────────────────── */
+  .chip{cursor:pointer}
+  .chip.selected{outline:2px solid var(--hot);outline-offset:2px}
+  .drawer{position:fixed;top:0;right:0;bottom:0;width:min(420px,92vw);z-index:50;
+          background:var(--panel);border-left:1px solid var(--line);
+          box-shadow:-18px 0 40px rgba(0,0,0,.45);
+          display:grid;grid-template-rows:auto 1fr;
+          transform:translateX(105%);transition:transform .3s ease}
+  .drawer.open{transform:none}
+  .d-head{padding:16px;border-bottom:1px solid var(--line)}
+  .d-title{font-family:var(--disp);font-weight:700;font-size:16px;letter-spacing:.03em;
+           display:flex;align-items:center;gap:10px}
+  .d-title .d-state{font-family:var(--mono);font-size:9px;letter-spacing:.12em;
+           text-transform:uppercase;padding:2px 8px;border-radius:999px;border:1px solid var(--line)}
+  .d-state.running{color:var(--hot);border-color:rgba(255,180,84,.5)}
+  .d-state.cold{color:var(--cold);border-color:rgba(125,214,232,.4)}
+  .d-state.queued{color:var(--warn);border-color:rgba(242,143,173,.4)}
+  .d-sub{font-family:var(--mono);font-size:10px;color:var(--muted);margin-top:6px;line-height:1.6}
+  #d-close{position:absolute;top:12px;right:14px;font-family:var(--mono);font-size:16px;
+           color:var(--muted);background:var(--panel-2);border:1px solid var(--line);
+           border-radius:6px;width:28px;height:28px;cursor:pointer}
+  #d-close:hover{color:var(--text)}
+  .d-body{overflow-y:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
+  .d-entry{border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:var(--panel-2)}
+  .d-entry .d-kind{font-family:var(--mono);font-size:9px;letter-spacing:.14em;
+           text-transform:uppercase;display:flex;gap:8px;align-items:baseline}
+  .d-entry .d-kind .d-t{color:var(--faint);letter-spacing:.02em;margin-left:auto}
+  .d-entry .d-text{font-size:12px;line-height:1.5;color:var(--text);margin-top:5px;
+           word-break:break-word}
+  .d-entry.k-prompt .d-kind{color:var(--cold)}
+  .d-entry.k-reply .d-kind{color:var(--ok)}
+  .d-entry.k-error .d-kind{color:var(--warn)}
+  .d-entry.k-restore .d-kind,.d-entry.k-checkpoint .d-kind{color:var(--hot)}
+  .d-entry.k-restore,.d-entry.k-checkpoint,.d-entry.k-queued{background:transparent}
+  .d-entry.k-restore .d-text,.d-entry.k-checkpoint .d-text,.d-entry.k-queued .d-text{
+           font-family:var(--mono);font-size:10px;color:var(--muted)}
+  .d-empty{color:var(--faint);font-family:var(--mono);font-size:11px;padding:20px 4px}
 </style>
 
 <div class="app">
@@ -237,6 +275,15 @@
       <canvas id="chart" height="150"></canvas>
     </section>
   </div>
+</div>
+
+<div class="drawer" id="drawer" aria-label="agent activity">
+  <div class="d-head">
+    <div class="d-title"><span id="d-name"></span><span class="d-state" id="d-state"></span></div>
+    <div class="d-sub" id="d-sub"></div>
+    <button id="d-close" aria-label="close">×</button>
+  </div>
+  <div class="d-body" id="d-body"></div>
 </div>
 
 <script>
@@ -318,6 +365,7 @@
                                kb: 180 + Math.round(Math.random()*640) };
     setState(a, 'cold', `${a.kb} KiB · zst`);
     placeAt(el, shelfRect(a));
+    el.onclick = () => openDrawer(name);   // click into the agent
     reflowCold();          // a new slot can rewrap the shelf; re-pin everyone
     refreshStats();
     return a;
@@ -380,6 +428,7 @@
     lastRestore = ms || lastRestore;
     refreshStats();
     log('restore', `<b>restore</b> ${a.ns}/${a.name} → worker-${w.id} ${ms?`(${ms} ms)`:''}`);
+    actPush(a.name, 'restore', `restored from snapshot → worker-${w.id}`, ms);
     setTimeout(() => { if (a.state==='restoring') setState(a,'running','session open · ACP'); },
                reduced ? 0 : Math.min(ms||550, 900));
     return true;
@@ -393,6 +442,7 @@
       a.slot.classList.remove('away');
       setState(a, 'cold', `${a.kb} KiB · zst`);
       placeAt(a.el, shelfRect(a));
+      actPush(a.name, 'checkpoint', `zstd snapshot (${a.kb} KiB) → object storage`);
       pump();   // a slot just freed — admit the next queued actor
     }, reduced ? 0 : (ms ?? 600));
   }
@@ -511,6 +561,7 @@
       a.slot.classList.remove('away');
       placeAt(a.el, shelfRect(a));
       log('suspend', `<b>checkpoint</b> ${a.ns}/${name} → object storage`);
+      actPush(name, 'checkpoint', 'zstd snapshot → object storage');
     }
 
     for (const [name, entries] of groups){
@@ -533,6 +584,7 @@
           a.slot.classList.add('away');
           placeAt(a.el, bayRect(w));
           log('restore', `<b>restore</b> ${a.ns}/${name} → ${pod}`);
+          actPush(name, 'restore', `restored from snapshot → ${pod}`);
         }
         const st = String(hot.status || '').toLowerCase();
         setState(a, (st.includes('restor')||st.includes('resum')) ? 'restoring' : 'running',
@@ -584,6 +636,57 @@
       liveAssign.delete(name);
     }
     refreshStats();
+  }
+
+  // ── per-agent activity + drawer ────────────────────────
+  const agentAct = new Map();     // name -> [{t, kind, text, ms}]
+  let drawerAgent = null;
+  function actPush(name, kind, text, ms){
+    if (!agentAct.has(name)) agentAct.set(name, []);
+    const list = agentAct.get(name);
+    list.push({ t: Date.now(), kind, text, ms });
+    if (list.length > 80) list.shift();
+    if (drawerAgent === name) renderDrawer();
+  }
+  function openDrawer(name){
+    drawerAgent = name;
+    for (const n in actors) actors[n].el.classList.toggle('selected', n === name);
+    $('drawer').classList.add('open');
+    renderDrawer();
+  }
+  function closeDrawer(){
+    drawerAgent = null;
+    for (const n in actors) actors[n].el.classList.remove('selected');
+    $('drawer').classList.remove('open');
+  }
+  $('d-close').onclick = closeDrawer;
+  addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+  function renderDrawer(){
+    const a = actors[drawerAgent];
+    if (!a) return;
+    $('d-name').textContent = drawerAgent;
+    const st = $('d-state');
+    st.textContent = { cold:'suspended', queued:'queued', restoring:'restoring',
+                       running:'running', checkpointing:'checkpointing' }[a.state] ?? a.state;
+    st.className = 'd-state ' + (a.state === 'running' || a.state === 'restoring' ? 'running'
+                               : a.state === 'queued' ? 'queued' : 'cold');
+    $('d-sub').textContent = `${a.ns}/${drawerAgent}`
+      + (a.worker ? ` · on ${a.worker.pod ?? 'worker-' + a.worker.id}` : '')
+      + ` · ${a.el.querySelector('.meta').textContent}`;
+    const list = agentAct.get(drawerAgent) ?? [];
+    const body = $('d-body');
+    body.innerHTML = list.length ? '' :
+      '<div class="d-empty">no activity yet — waiting for this agent\'s next session</div>';
+    for (const e of [...list].reverse()){
+      const d = document.createElement('div');
+      d.className = 'd-entry k-' + e.kind;
+      const time = new Date(e.t).toTimeString().slice(0, 8);
+      const ms = e.ms ? ` · ${(e.ms / 1000).toFixed(1)}s` : '';
+      d.innerHTML = `<div class="d-kind">${e.kind}${ms}<span class="d-t">${time}</span></div>
+                     <div class="d-text"></div>`;
+      d.querySelector('.d-text').textContent = e.text ?? '';
+      body.appendChild(d);
+    }
   }
 
   // ── telemetry charts ───────────────────────────────────
@@ -671,6 +774,14 @@
   function handle(ev){
     switch (ev.type){
       case 'snapshot': applySnapshot(ev); break;
+      case 'activity': actPush(ev.e.agent, ev.e.kind, ev.e.text, ev.e.ms); break;
+      case 'activity_history':
+        for (const e of ev.items ?? []){
+          if (!agentAct.has(e.agent)) agentAct.set(e.agent, []);
+          agentAct.get(e.agent).push(e);
+        }
+        if (drawerAgent) renderDrawer();
+        break;
       case 'metrics': pushPoint(ev.p); break;
       case 'metrics_history': points.length = 0; points.push(...ev.points); drawChart(); break;
       case 'autoscale':
@@ -696,6 +807,7 @@
               setState(a, 'queued', 'waiting for worker');
               a.queuedAt = now;
               log('queue', `<b>queued</b> ${a.ns}/${n} — all workers busy`);
+              actPush(n, 'queued', 'pool full — waiting for a free worker');
             }
           } else if (a.state === 'queued'){
             // linger ≥1.2s after un-queue so the worker assignment (next poll)
@@ -721,8 +833,10 @@
                           setState(a, 'queued', 'waiting');
                           queue.push(a.name);
                           log('queue', `<b>queued</b> ${a.ns}/${a.name} — all workers busy`);
+                          actPush(a.name, 'queued', 'pool full — waiting for a free worker');
                         } break; }
-      case 'run':     log('run', `<b>session</b> ${ev.ns||'kagent'}/${ev.name} ${ev.msg||'tool call'}`); break;
+      case 'run':     log('run', `<b>session</b> ${ev.ns||'kagent'}/${ev.name} ${ev.msg||'tool call'}`);
+                      actPush(ev.name, 'session', ev.msg || 'tool call'); break;
       case 'suspend': { const a = actors[ev.name]; if (a && a.worker){
                           suspendVisual(a, ev.ms);
                           log('suspend', `<b>checkpoint</b> ${a.ns}/${a.name} → ${a.kb} KiB zst`);

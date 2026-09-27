@@ -70,11 +70,26 @@ done
 # and must be marked as such wherever they are recorded.
 PROVIDER="${PROVIDER:-anthropic}"
 OLLAMA_MODEL="${OLLAMA_MODEL:-qwen3:4b}"
+# gpt-5-nano is the cheapest text model OpenAI lists: $0.05/$0.40 per MTok
+# against claude-haiku-4-5's $1.00/$5.00 (checked 2026-09-18), so 20x cheaper in
+# and 12.5x out. This demo does not care about answer quality — the beats are
+# restore latency, pool behaviour and autoscaling. It only needs real
+# concurrency, which any hosted model gives and local Ollama does not.
+# Verified end to end on 0.10.1: a SandboxAgent turn returns its system-message
+# identity on gpt-5-nano, so the model string passes straight through.
+# Override for a sharper model:
+#   OPENAI_MODEL=gpt-4.1-mini PROVIDER=openai ./labs/lab1-kind-substrate.sh
+OPENAI_MODEL="${OPENAI_MODEL:-gpt-5-nano}"
 case "$PROVIDER" in
   anthropic)
     [[ -n "${ANTHROPIC_API_KEY:-}" ]] \
       && echo "ANTHROPIC_API_KEY set (len=${#ANTHROPIC_API_KEY})" \
-      || { echo "ANTHROPIC_API_KEY is empty — export it first, or run with PROVIDER=ollama"; exit 1; }
+      || { echo "ANTHROPIC_API_KEY is empty — export it first, or run with PROVIDER=openai or PROVIDER=ollama"; exit 1; }
+    ;;
+  openai)
+    [[ -n "${OPENAI_API_KEY:-}" ]] \
+      && echo "OPENAI_API_KEY set (len=${#OPENAI_API_KEY})" \
+      || { echo "OPENAI_API_KEY is empty — export it first, or run with PROVIDER=anthropic or PROVIDER=ollama"; exit 1; }
     ;;
   ollama)
     curl -s -m 3 http://localhost:11434/api/tags >/dev/null \
@@ -91,10 +106,15 @@ case "$PROVIDER" in
       && echo "model ${OLLAMA_MODEL} present" \
       || { echo "model ${OLLAMA_MODEL} not pulled — run: ollama pull ${OLLAMA_MODEL}"; exit 1; }
     ;;
-  *) echo "PROVIDER must be anthropic or ollama, got: $PROVIDER"; exit 1 ;;
+  *) echo "PROVIDER must be anthropic, openai or ollama, got: $PROVIDER"; exit 1 ;;
 esac
 
-echo "substrate=$SUBSTRATE_VERSION kagent=$KAGENT_VERSION provider=$PROVIDER"
+case "$PROVIDER" in
+  openai) _MODEL_IN_PLAY="$OPENAI_MODEL" ;;
+  ollama) _MODEL_IN_PLAY="$OLLAMA_MODEL" ;;
+  *)      _MODEL_IN_PLAY="chart default" ;;
+esac
+echo "substrate=$SUBSTRATE_VERSION kagent=$KAGENT_VERSION provider=$PROVIDER model=$_MODEL_IN_PLAY"
 
 # --- Workaround: Docker Desktop's credential helper is wedged ------------------
 # 2026-09-06. Every `helm ... oci://ghcr.io/...` call stalls for many minutes on
@@ -239,6 +259,18 @@ if [[ "$PROVIDER" == "anthropic" ]]; then
     --from-literal=ANTHROPIC_API_KEY="${ANTHROPIC_API_KEY}" \
     --dry-run=client -o yaml | kubectl apply -f -
   PROVIDER_SET+=(--set providers.default=anthropic)
+elif [[ "$PROVIDER" == "openai" ]]; then
+  # Same secret-reference contract as anthropic. The chart's own defaults for
+  # providers.openAI already point at secret kagent-openai / key OPENAI_API_KEY,
+  # so only the secret and the model need supplying. Note the camelCase value
+  # key: providers.default=openAI. Lowercase "openai" fails the render with
+  #   Provider key=openai is not found under .Values.providers
+  # which at least fails loudly, unlike the old providers.<p>.apiKey value.
+  kubectl create secret generic kagent-openai \
+    --namespace kagent \
+    --from-literal=OPENAI_API_KEY="${OPENAI_API_KEY}" \
+    --dry-run=client -o yaml | kubectl apply -f -
+  PROVIDER_SET+=(--set providers.default=openAI --set providers.openAI.model="${OPENAI_MODEL}")
 else
   # Ollama needs no secret; the chart's default host, host.docker.internal:11434,
   # is exactly where kind on Docker Desktop finds a local Ollama.
@@ -252,7 +284,10 @@ helm upgrade --install kagent \
   "${PROVIDER_SET[@]}" \
   || kubectl wait deploy/kagent-controller -n kagent --for=condition=Available --timeout=10m
 
-[[ "$PROVIDER" == "anthropic" ]] && kubectl get secret kagent-anthropic -n kagent
+case "$PROVIDER" in
+  anthropic) kubectl get secret kagent-anthropic -n kagent ;;
+  openai)    kubectl get secret kagent-openai -n kagent ;;
+esac
 kubectl get pods -n kagent
 
 # --- Step 4: SandboxAgent ----------------------------------------------------

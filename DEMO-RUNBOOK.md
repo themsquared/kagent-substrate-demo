@@ -46,6 +46,14 @@ real demo beat now. `--budget 400` caps spend (≈ a dollar; each session is a
 fraction of a cent) and flips STOP DEMO when hit — never leave it running
 uncapped. Ctrl-C or STOP DEMO halts within 2s.
 
+**OpenAI works too, and is much cheaper.** `OPENAI_API_KEY=... PROVIDER=openai
+./labs/lab1-kind-substrate.sh` installs against `gpt-5-nano`, the cheapest text
+model OpenAI lists. Per MTok that is $0.05 in / $0.40 out against Haiku 4.5's
+$1.00 / $5.00 (checked 2026-09-18), so the same 400-session budget lands in
+single-digit cents. The demo does not turn on answer quality — the beats are
+restore latency, pool behaviour and autoscaling — so nano is enough.
+`OPENAI_MODEL=gpt-4.1-mini` if you want sharper replies on screen.
+
 > If you ever fall back to local Ollama: it serves ONE generation at a time
 > (`-np 1`), so cap `--concurrency 2` and expect 25–60s turns; more workers
 > make it WORSE, not better. That mismatch is why we run Anthropic for the demo.

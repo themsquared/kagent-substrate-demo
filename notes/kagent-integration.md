@@ -132,8 +132,8 @@ Related demo-ops gotchas, all hit live:
 - Local Ollama models: fine for install-path testing, rough for live demos —
   qwen3:4b turns ran 30–120s under concurrency and hallucinated tool calls;
   a 25GB model adds a multi-minute first-load cliff. Use a hosted model
-  (e.g. claude-haiku-4-5 via `providers.anthropic`) for anything with an
-  audience.
+  (claude-haiku-4-5 via `providers.anthropic`, or gpt-5-nano via
+  `providers.openAI`) for anything with an audience.
 
 ## Field gotchas (from the official walkthrough)
 
@@ -165,7 +165,11 @@ Pins: kagent 0.10.1 (chart and controller image), substrate 0.0.9 (kagent
   required by CEL.
 - **Provider credentials are secret references.** No `providers.<p>.apiKey`
   value; create `kagent-anthropic` (key `ANTHROPIC_API_KEY`) before install,
-  set `providers.default=anthropic`.
+  set `providers.default=anthropic`. OpenAI is the same contract with secret
+  `kagent-openai` / key `OPENAI_API_KEY` and `providers.default=openAI`.
+  Mind the camelCase: lowercase `openai` fails the render outright with
+  `Provider key=openai is not found under .Values.providers` (0.10.1), so
+  unlike the old `apiKey` value it does not fail silently.
 - Chart values still `controller.substrate.{enabled,ateApiEndpoint,ateApiInsecure}`
   and `substrateWorkerPool.{create,replicas,ateomImage,sandboxClass}`. New:
   `controller.substrate.atenetRouterURL`, `defaultWorkerPool`, `ateApiServer`.
